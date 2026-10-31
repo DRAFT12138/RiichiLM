@@ -20,6 +20,7 @@ Build a Mahjong policy, train it on your own data, improve it through self-play,
 | **Legal actions by construction** | Rust-backed rules and a legal-action trie constrain complete actions, including call combinations and discard details. The actor sees only its own projected information. |
 | **Train, then self-play** | Action-token supervision, KL-anchored PPO, a training-only Oracle Critic, and a bounded frozen-opponent pool. Privileged Critic inputs are separate from actor observations. |
 | **Reuse shared context** | Up to eight decisions share a training trunk within the same round and view. Eligible GPU BF16 runs use compiled layers, fused Adam, merged projections, and CPU lookahead. |
+| **Train on one GPU** | The default 101.48M-parameter model trains on a single GPU. A measured BF16 training sample peaked at 4.12 GiB allocated / 6.45 GiB reserved; see the reference setup and throughput below. |
 | **Resume the actual run** | Checkpoints retain model, optimizer, RNG, progress, and data cursor. RL supports READY/PREPARED round boundaries and recomputation of interrupted work. |
 | **See the policy play** | React/TypeScript arena for human vs AI and four-AI spectating. Mix your local NTP checkpoints, external LLMs, and random players independently by seat. |
 | **An arena in three languages** | English, Simplified Chinese, and Japanese; browser-language selection, a persistent manual switch, pause, step, speed, and viewing-seat controls. |
@@ -60,6 +61,31 @@ Once you have supplied all required inputs:
 `training.max_updates` is an **absolute total**, including on resume. New pretraining defaults to GPU BF16; `runtime.device=cpu runtime.precision=32-true` selects CPU FP32 for a suitable small configuration. Full resume preserves the saved precision/device and requires compatible model, data, configuration, and state formats. Changing the runtime environment may change numerical results.
 
 RL initialization currently requires your compatible NTP checkpoint **and its corresponding processed training corpus** for identity verification. An arbitrary standalone Actor file is not an interchangeable initialization input. The Web model picker currently supports NTP checkpoints, not RL Actor snapshots.
+
+### Reference hardware and compute throughput
+
+The current development machine uses the following setup, checked on 2026-10-31:
+
+| Component | Reference setup |
+| --- | --- |
+| GPU | One AMD Radeon RX 7900 XTX, 24 GB VRAM, `gfx1100` |
+| CPU / memory | Intel Core i9-9900KF, 16 logical CPUs; 23.4 GiB RAM visible to WSL |
+| OS | Ubuntu 22.04.5 LTS on WSL2 |
+| Python / GPU runtime | Python 3.14.7; PyTorch `2.14.0+rocm10.1.0`; HIP `7.16.26385` |
+| Model libraries | Transformers 5.19.0; Lightning Fabric 2.6.6 |
+| Training configuration | Default 16-layer, 101,477,120-parameter Qwen3 policy; 8,192-token limit; up to eight decisions per shared group; BF16 computation with FP32 parameters, gradients, and Adam state |
+
+A bounded training-throughput measurement on 2026-10-30 used this GPU/runtime and default model with compiled layers, fused Adam, merged projections, and CPU lookahead. Two measured passes covered 378 updates, 2,510 decisions, and 9,370 supervised action tokens:
+
+| Compute metric | Measured value |
+| --- | ---: |
+| Mean update time | 101.19 ms |
+| Update throughput | 9.88 updates/s |
+| Decision throughput | 65.62 decisions/s |
+| Supervised action-token throughput | 244.96 tokens/s |
+| Peak allocated / reserved GPU memory | 4.12 / 6.45 GiB |
+
+Timing includes data preparation and transfers, forward/backward computation, gradient checks, Adam, synchronization, and per-update reporting. It excludes startup, warmup, evaluation, and checkpoint saves. Tokens here are supervised action tokens, not all context tokens processed. These are sampled compute-throughput results; memory varies with input lengths, grouping, validation, and backend. The measured footprint does not establish a minimum supported GPU capacity.
 
 ## Install and play
 
