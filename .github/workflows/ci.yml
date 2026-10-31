@@ -30,10 +30,10 @@ jobs:
           uv pip install --python .venv/bin/python --no-deps -e .
           .venv/bin/python -m maturin build --release --locked --no-default-features --manifest-path envs/riichienv/riichienv-python/Cargo.toml --interpreter .venv/bin/python --out /tmp/rules-wheels
           uv pip install --python .venv/bin/python --no-deps /tmp/rules-wheels/*.whl
+      - working-directory: web
+        run: npm ci && npm run build
       - run: .venv/bin/python scripts/verify-public.py
       - working-directory: web
         run: |
-          npm ci
-          npm run build
           npx playwright install --with-deps chromium
           npm run test:e2e
