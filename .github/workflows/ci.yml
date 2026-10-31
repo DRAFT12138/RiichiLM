@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   cpu-and-web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CUDA_VISIBLE_DEVICES: ""
@@ -24,16 +24,22 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: rustup toolchain install 1.92.0 --profile minimal
-      - run: |
+      - name: Install Python dependencies
+        run: |
           uv venv --python 3.14 .venv
           uv pip install --python .venv/bin/python -r requirements-cuda.txt
           uv pip install --python .venv/bin/python --no-deps -e .
+      - name: Build rules engine
+        run: |
+          .venv/bin/python -m maturin --version
           .venv/bin/python -m maturin build --release --locked --no-default-features --manifest-path envs/riichienv/riichienv-python/Cargo.toml --interpreter .venv/bin/python --out /tmp/rules-wheels
           uv pip install --python .venv/bin/python --no-deps /tmp/rules-wheels/*.whl
       - working-directory: web
         run: npm ci && npm run build
-      - run: .venv/bin/python scripts/verify-public.py
-      - working-directory: web
+      - name: Public Python regression
+        run: .venv/bin/python scripts/verify-public.py
+      - name: Browser regression
+        working-directory: web
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e

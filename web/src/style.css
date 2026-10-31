@@ -657,6 +657,8 @@ button svg {
 }
 .page-footer {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
   padding: 25px 0 30px;
@@ -664,6 +666,7 @@ button svg {
   color: #587a80;
   letter-spacing: 2px;
 }
+.page-footer a { color: inherit; text-underline-offset: 3px; }
 .search {
   display: flex;
   align-items: center;

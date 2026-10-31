@@ -1,5 +1,6 @@
 /** English and Japanese translations; Chinese source messages are the fallback. */
 export const messages: Record<string, readonly [string, string]> = {
+  "RiichiLM 官网": ["RiichiLM official website", "RiichiLM 公式サイト"],
   "学习 · 对局 · 探索": ["LEARN · PLAY · EXPLORE", "学ぶ · 打つ · 探る"],
   "RIICHILM · 学习与对局": ["RIICHILM · LEARN & PLAY", "RIICHILM · 学習と対局"],
   "感谢对局": ["THANK YOU FOR PLAYING", "対局ありがとうございました"],

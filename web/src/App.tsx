@@ -265,9 +265,11 @@ export function App() {
           <header className="topbar">
             <a
               className="brand"
-              href="#"
-              onClick={(e) => e.preventDefault()}
-              aria-label="RiichiLM"
+              href="https://www.riichilm.top"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={t("RiichiLM 官网")}
+              title={t("RiichiLM 官网")}
             >
               <span className="brand-symbol" aria-hidden="true"><Sparkles size={23} /></span>
               <span>

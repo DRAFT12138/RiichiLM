@@ -361,7 +361,11 @@ export function Setup({
       </section>
       <footer className="page-footer">
         <span>{t("一张牌，一次选择。")}</span>
-        <span>RiichiLM · {t("仅供学习与研究")}</span>
+        <span>
+          <a href="https://www.riichilm.top" target="_blank" rel="noopener noreferrer" aria-label={t("RiichiLM 官网")}>
+            www.riichilm.top
+          </a> · {t("仅供学习与研究")}
+        </span>
       </footer>
     </>
   );

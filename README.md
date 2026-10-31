@@ -4,6 +4,8 @@
 
 # RiichiLM
 
+[Official website · www.riichilm.top](https://www.riichilm.top)
+
 **Teaching Machines to Play Riichi Mahjong with LLMs and RL**
 
 Build a Mahjong policy, train it on your own data, improve it through self-play, and watch its decisions at a real table. RiichiLM connects Qwen3-based sequence models, a Rust rules engine, reinforcement learning, and an illustrated browser arena in one research codebase.
