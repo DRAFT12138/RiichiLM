@@ -10,7 +10,11 @@ const invalidPage = (error: unknown) => error instanceof api.ApiError &&
   (error.status === 403 || (error.status === 409 && error.code === "STALE_DECISION" && error.message === "页面已失效，请刷新并重新开局"));
 export function App() {
   const { locale, t } = useI18n();
-  useEffect(() => { document.documentElement.lang = locale; document.title = t("RiichiLM · 对局与观战"); }, [locale, t]);
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.title = t("RiichiLM · 学习、对局与观战");
+    document.querySelector('meta[name="description"]')?.setAttribute("content", t("用大语言模型、监督学习与强化学习，让机器学打立直麻将。"));
+  }, [locale, t]);
   const [catalog, setCatalog] = useState<Catalog>({ runs: [], errors: [] }),
     [table, setTable] = useState<Table | null>(null),
     [ready, setReady] = useState(false),

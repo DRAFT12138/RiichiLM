@@ -1,10 +1,10 @@
-![RiichiLM — Large Model Reinforcement Learning](../../../assets/brand/riichilm.png)
+![RiichiLM — Large Language Models & Reinforcement Learning for Riichi Mahjong](../../../assets/brand/riichilm.png)
 
 [English](../../../README.md) · [简体中文](../zh-CN/README.md) · [日本語](README.md)
 
 # RiichiLM
 
-**リーチ麻雀のための大規模モデル強化学習**
+**大規模言語モデルと強化学習で、機械にリーチ麻雀を教える**
 
 自分のデータで麻雀の方策を学習し、自己対戦で改良し、実際のルールで動く卓で判断を観察する。RiichiLM は、Qwen3 ベースの系列モデル、Rust ルールエンジン、強化学習、イラスト付きブラウザー対局を一つの研究コードベースにつなぎます。
 
@@ -31,6 +31,33 @@
 ![RiichiLM AI 観戦卓](../../../assets/screenshots/spectator-en.png)
 
 確定済みの行動、合法候補数、サンプリング確率、LLM が返した短い要約を表示します。要約はモデルの出力であり、内部の思考過程ではありません。人間との対局では相手の要約を表示しません。スクリーンショットはランダム戦略によるもので、学習済みモデルの強さを示しません。
+
+## 自分のデータで学習する
+
+次のコマンドを実行する前に、[インストールと体験](#インストールと体験)に従って Python 環境とルールエンジンを設定してください。フロントエンドのビルドはブラウザー対局を使う場合に必要です。
+
+学習入口が読むのは互換形式に**処理済みの方策コーパス**であり、任意の生牌譜ではありません。manifest、索引、圧縮レコード、行動の教師情報、対応する Tokenizer・ルールの識別情報が必要です。汎用 reader は `mahjong-policy-corpus/1` と互換 text/3 build に対応します。ソース固有のダウンロード・生牌譜解析・非公開処理パイプラインは公開範囲に含めません。
+
+公開設定では任意の何切る評価を既定で無効にします。自前の互換問題セットを使う場合は `evaluation.nanikiru_dir=/absolute/path/to/your/evaluation`、検証用コーパスのみの場合は `evaluation.nanikiru_dir=null` を指定します。評価データセットは配布しません。完全な再開では保存時の設定を引き継ぎ、この項目の導入前の checkpoint は元の評価入力条件を保ちます。
+
+必要な入力をすべて用意した後の例：
+
+```bash
+.venv/bin/python -m mahjong pretrain \
+  data.build_dir=/absolute/path/to/your/compatible-corpus \
+  training.max_updates=200 data.validation_max_samples=32
+
+.venv/bin/python -m mahjong resume \
+  --run outputs/YOUR_RUN_ID --checkpoint latest training.max_updates=10000
+
+.venv/bin/python -m mahjong rl train \
+  --init-checkpoint /absolute/path/to/your/compatible-ntp-checkpoint \
+  --device cpu --output outputs/rl
+```
+
+`training.max_updates` は再開時も**絶対的な総更新数**です。新規事前学習の既定値は GPU BF16 です。適切な小規模設定では `runtime.device=cpu runtime.precision=32-true` で CPU FP32 を選べます。完全な再開では保存時の精度・デバイス条件を引き継ぎ、モデル・データ・設定・状態形式の互換性が必要です。実行環境の変更で数値結果が変わる場合があります。
+
+現在の RL 初期化には互換 NTP checkpoint と、その識別情報の検証に使う元の処理済み学習コーパスが必要です。任意の単独 Actor ファイルで代用できるわけではありません。Web のモデル選択は現在 NTP checkpoint に対応し、RL Actor スナップショットには未対応です。
 
 ## インストールと体験
 
@@ -78,31 +105,6 @@ Node.js 20.19+ または 22.12+ でフロントエンドをビルドし、ロー
 ```
 
 認証が必要なら `"api_key_env": "YOUR_LLM_API_KEY"` を追加し、**サーバー側**の環境変数を設定します。キーはサーバーに保持します。各 LLM に渡すのはその席の可視状態と合法候補だけで、生成とサンプリングは接続先が行います。利用条件・費用・遅延・互換性は提供元に依存します。自由記述の判断要約はモデルが返した言語を保ちます。
-
-## 自分のデータで学習する
-
-学習入口が読むのは互換形式に**処理済みの方策コーパス**であり、任意の生牌譜ではありません。manifest、索引、圧縮レコード、行動の教師情報、対応する Tokenizer・ルールの識別情報が必要です。汎用 reader は `mahjong-policy-corpus/1` と互換 text/3 build に対応します。ソース固有のダウンロード・生牌譜解析・非公開処理パイプラインは公開範囲に含めません。
-
-公開設定では任意の何切る評価を既定で無効にします。自前の互換問題セットを使う場合は `evaluation.nanikiru_dir=/absolute/path/to/your/evaluation`、検証用コーパスのみの場合は `evaluation.nanikiru_dir=null` を指定します。評価データセットは配布しません。完全な再開では保存時の設定を引き継ぎ、この項目の導入前の checkpoint は元の評価入力条件を保ちます。
-
-必要な入力をすべて用意した後の例：
-
-```bash
-.venv/bin/python -m mahjong pretrain \
-  data.build_dir=/absolute/path/to/your/compatible-corpus \
-  training.max_updates=200 data.validation_max_samples=32
-
-.venv/bin/python -m mahjong resume \
-  --run outputs/YOUR_RUN_ID --checkpoint latest training.max_updates=10000
-
-.venv/bin/python -m mahjong rl train \
-  --init-checkpoint /absolute/path/to/your/compatible-ntp-checkpoint \
-  --device cpu --output outputs/rl
-```
-
-`training.max_updates` は再開時も**絶対的な総更新数**です。新規事前学習の既定値は GPU BF16 です。適切な小規模設定では `runtime.device=cpu runtime.precision=32-true` で CPU FP32 を選べます。完全な再開では保存時の精度・デバイス条件を引き継ぎ、モデル・データ・設定・状態形式の互換性が必要です。実行環境の変更で数値結果が変わる場合があります。
-
-現在の RL 初期化には互換 NTP checkpoint と、その識別情報の検証に使う元の処理済み学習コーパスが必要です。任意の単独 Actor ファイルで代用できるわけではありません。Web のモデル選択は現在 NTP checkpoint に対応し、RL Actor スナップショットには未対応です。
 
 ## 研究段階と利用範囲
 

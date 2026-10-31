@@ -1,4 +1,4 @@
-![RiichiLM — Large Model Reinforcement Learning](assets/brand/riichilm.png)
+![RiichiLM — Large Language Models & Reinforcement Learning for Riichi Mahjong](assets/brand/riichilm.png)
 
 [English](README.md) · [简体中文](docs/i18n/zh-CN/README.md) · [日本語](docs/i18n/ja/README.md)
 
@@ -31,6 +31,33 @@ Choose a single round, East-only game, or hanchan. Illustrated characters are co
 ![RiichiLM AI spectator table](assets/screenshots/spectator-en.png)
 
 Watch committed moves, legal-choice counts, sampling probabilities, and short summaries when supplied by an LLM. Summaries are model output, not an internal reasoning trace. A human player does not receive opponents' summaries. These screenshots use random opponents; they do not demonstrate trained playing strength.
+
+## Train with your own inputs
+
+Set up the Python environment and rules engine in [Install and play](#install-and-play) before running these commands. The frontend is only needed for the browser arena.
+
+The training interfaces consume compatible **processed** policy corpora, not arbitrary raw logs. Supply the corpus manifest, indexes, compressed records, action supervision, and matching tokenizer/rule bindings; the generic reader supports `mahjong-policy-corpus/1` and compatible text/3 builds. Source-specific downloads, raw-log parsers, and private processing pipelines are outside the public scope.
+
+The public configuration disables the optional Nanikiru benchmark. To evaluate on your own compatible question set, pass `evaluation.nanikiru_dir=/absolute/path/to/your/evaluation`. Pass `evaluation.nanikiru_dir=null` to use only the held-out corpus. No evaluation dataset is bundled. Full resume retains the saved choice; checkpoints created before this option retain their original evaluation input requirement.
+
+Once you have supplied all required inputs:
+
+```bash
+.venv/bin/python -m mahjong pretrain \
+  data.build_dir=/absolute/path/to/your/compatible-corpus \
+  training.max_updates=200 data.validation_max_samples=32
+
+.venv/bin/python -m mahjong resume \
+  --run outputs/YOUR_RUN_ID --checkpoint latest training.max_updates=10000
+
+.venv/bin/python -m mahjong rl train \
+  --init-checkpoint /absolute/path/to/your/compatible-ntp-checkpoint \
+  --device cpu --output outputs/rl
+```
+
+`training.max_updates` is an **absolute total**, including on resume. New pretraining defaults to GPU BF16; `runtime.device=cpu runtime.precision=32-true` selects CPU FP32 for a suitable small configuration. Full resume preserves the saved precision/device and requires compatible model, data, configuration, and state formats. Changing the runtime environment may change numerical results.
+
+RL initialization currently requires your compatible NTP checkpoint **and its corresponding processed training corpus** for identity verification. An arbitrary standalone Actor file is not an interchangeable initialization input. The Web model picker currently supports NTP checkpoints, not RL Actor snapshots.
 
 ## Install and play
 
@@ -78,31 +105,6 @@ To add external LLM players, create a local JSON configuration using this struct
 ```
 
 For an authenticated endpoint, add `"api_key_env": "YOUR_LLM_API_KEY"` and set that variable in the **server's** environment. Keys stay on the server. Each external LLM receives its own visible state and legal choices; its service handles generation and sampling. Service access, costs, latency, and compatibility depend on your provider. Free-text model summaries retain the language returned by that model.
-
-## Train with your own inputs
-
-The training interfaces consume compatible **processed** policy corpora, not arbitrary raw logs. Supply the corpus manifest, indexes, compressed records, action supervision, and matching tokenizer/rule bindings; the generic reader supports `mahjong-policy-corpus/1` and compatible text/3 builds. Source-specific downloads, raw-log parsers, and private processing pipelines are outside the public scope.
-
-The public configuration disables the optional Nanikiru benchmark. To evaluate on your own compatible question set, pass `evaluation.nanikiru_dir=/absolute/path/to/your/evaluation`. Pass `evaluation.nanikiru_dir=null` to use only the held-out corpus. No evaluation dataset is bundled. Full resume retains the saved choice; checkpoints created before this option retain their original evaluation input requirement.
-
-Once you have supplied all required inputs:
-
-```bash
-.venv/bin/python -m mahjong pretrain \
-  data.build_dir=/absolute/path/to/your/compatible-corpus \
-  training.max_updates=200 data.validation_max_samples=32
-
-.venv/bin/python -m mahjong resume \
-  --run outputs/YOUR_RUN_ID --checkpoint latest training.max_updates=10000
-
-.venv/bin/python -m mahjong rl train \
-  --init-checkpoint /absolute/path/to/your/compatible-ntp-checkpoint \
-  --device cpu --output outputs/rl
-```
-
-`training.max_updates` is an **absolute total**, including on resume. New pretraining defaults to GPU BF16; `runtime.device=cpu runtime.precision=32-true` selects CPU FP32 for a suitable small configuration. Full resume preserves the saved precision/device and requires compatible model, data, configuration, and state formats. Changing the runtime environment may change numerical results.
-
-RL initialization currently requires your compatible NTP checkpoint **and its corresponding processed training corpus** for identity verification. An arbitrary standalone Actor file is not an interchangeable initialization input. The Web model picker currently supports NTP checkpoints, not RL Actor snapshots.
 
 ## Research status and scope
 

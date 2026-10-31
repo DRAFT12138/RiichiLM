@@ -1,10 +1,10 @@
-![RiichiLM — Large Model Reinforcement Learning](../../../assets/brand/riichilm.png)
+![RiichiLM — Large Language Models & Reinforcement Learning for Riichi Mahjong](../../../assets/brand/riichilm.png)
 
 [English](../../../README.md) · [简体中文](README.md) · [日本語](../ja/README.md)
 
 # RiichiLM
 
-**面向立直麻将的大模型强化学习**
+**通过大语言模型与强化学习，让机器学打立直麻将**
 
 用自己的数据训练麻将策略，通过自我对弈改进模型，再到真实规则的牌桌上观察它的选择。RiichiLM 将 Qwen3 序列模型、Rust 规则引擎、强化学习与插画风浏览器牌桌连接在同一套研究代码中。
 
@@ -31,6 +31,33 @@
 ![RiichiLM AI 观战牌桌](../../../assets/screenshots/spectator-en.png)
 
 查看已提交动作、合法候选数量、采样概率，以及 LLM 返回的简短说明。说明是模型输出，不是内部思维链；真人对战不会展示对手说明。截图使用随机策略，不代表训练后棋力。
+
+## 使用自备数据训练
+
+执行下列命令前，先按[安装与体验](#安装与体验)配置 Python 环境和规则引擎。只有使用浏览器牌桌时才需要构建前端。
+
+训练入口读取格式兼容的**已处理策略语料**，不直接接收任意原始牌谱。需要提供语料 manifest、索引、压缩正文、动作监督，以及匹配的 Tokenizer／规则绑定；通用 reader 支持 `mahjong-policy-corpus/1` 和兼容 text/3 build。具体来源的下载、原始牌谱解析和私有处理流水线不在开源范围。
+
+公开配置默认不启用可选的何切评测。若有自备兼容题集，可设置 `evaluation.nanikiru_dir=/absolute/path/to/your/evaluation`；`evaluation.nanikiru_dir=null` 仅验证留出语料。项目不分发评测数据集。完整续训沿用保存的选择；新增该选项前的旧 checkpoint 保持原评测输入要求。
+
+提供完整输入后，可使用：
+
+```bash
+.venv/bin/python -m mahjong pretrain \
+  data.build_dir=/absolute/path/to/your/compatible-corpus \
+  training.max_updates=200 data.validation_max_samples=32
+
+.venv/bin/python -m mahjong resume \
+  --run outputs/YOUR_RUN_ID --checkpoint latest training.max_updates=10000
+
+.venv/bin/python -m mahjong rl train \
+  --init-checkpoint /absolute/path/to/your/compatible-ntp-checkpoint \
+  --device cpu --output outputs/rl
+```
+
+`training.max_updates` 始终表示**绝对总目标**，续训也一样。新建预训练默认 GPU BF16；小配置可使用 `runtime.device=cpu runtime.precision=32-true` 选择 CPU FP32。完整恢复保留原精度／设备约定，要求模型、数据、配置和状态格式兼容；更换环境后数值轨迹可能变化。
+
+当前 RL 初始化需要兼容的 NTP checkpoint，及其对应的已处理训练语料用于身份核验，不能任意用独立 Actor 文件替代。Web 模型选择器目前支持 NTP checkpoint，暂不加载 RL Actor 快照。
 
 ## 安装与体验
 
@@ -78,31 +105,6 @@ uv pip install --python .venv/bin/python --no-deps outputs/wheels/riichienv-*.wh
 ```
 
 需要认证时，增加 `"api_key_env": "YOUR_LLM_API_KEY"`，并在**服务端**设置对应环境变量。密钥留在服务端。外接 LLM 只接收本席可见状态及合法候选，生成和采样由其服务完成。服务访问、费用、延迟与兼容性取决于你的提供方。模型自由文本说明保留其返回的语言。
-
-## 使用自备数据训练
-
-训练入口读取格式兼容的**已处理策略语料**，不直接接收任意原始牌谱。需要提供语料 manifest、索引、压缩正文、动作监督，以及匹配的 Tokenizer／规则绑定；通用 reader 支持 `mahjong-policy-corpus/1` 和兼容 text/3 build。具体来源的下载、原始牌谱解析和私有处理流水线不在开源范围。
-
-公开配置默认不启用可选的何切评测。若有自备兼容题集，可设置 `evaluation.nanikiru_dir=/absolute/path/to/your/evaluation`；`evaluation.nanikiru_dir=null` 仅验证留出语料。项目不分发评测数据集。完整续训沿用保存的选择；新增该选项前的旧 checkpoint 保持原评测输入要求。
-
-提供完整输入后，可使用：
-
-```bash
-.venv/bin/python -m mahjong pretrain \
-  data.build_dir=/absolute/path/to/your/compatible-corpus \
-  training.max_updates=200 data.validation_max_samples=32
-
-.venv/bin/python -m mahjong resume \
-  --run outputs/YOUR_RUN_ID --checkpoint latest training.max_updates=10000
-
-.venv/bin/python -m mahjong rl train \
-  --init-checkpoint /absolute/path/to/your/compatible-ntp-checkpoint \
-  --device cpu --output outputs/rl
-```
-
-`training.max_updates` 始终表示**绝对总目标**，续训也一样。新建预训练默认 GPU BF16；小配置可使用 `runtime.device=cpu runtime.precision=32-true` 选择 CPU FP32。完整恢复保留原精度／设备约定，要求模型、数据、配置和状态格式兼容；更换环境后数值轨迹可能变化。
-
-当前 RL 初始化需要兼容的 NTP checkpoint，及其对应的已处理训练语料用于身份核验，不能任意用独立 Actor 文件替代。Web 模型选择器目前支持 NTP checkpoint，暂不加载 RL Actor 快照。
 
 ## 研究状态与使用范围
 

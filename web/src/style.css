@@ -2978,7 +2978,7 @@ button.tile:not(:disabled):focus-visible {
   .spectator-table .compact-seat-score { top: 195px; }
 }
 
-/* 青雀: a contemporary character-led game lobby and matching table HUD. */
+/* RiichiLM: a character-led game lobby and matching table HUD. */
 :root { --gold: #f2cf93; --muted: #a3b7c9; --line: #a2c0d024; }
 .app-shell:not(.in-game) {
   background:
@@ -3148,6 +3148,7 @@ button.tile:not(:disabled):focus-visible {
 .welcome-kicker span { background: #f29ab1; }
 .welcome h1 { color: #38596a; }
 .welcome p { color: #587884; }
+.welcome .welcome-scope { max-width: 540px; margin: 10px 0 0; font-size: 10px; }
 .welcome-tags { color: #608b8d; }
 .welcome-art-ring { border-color: #ffffffa8; box-shadow: 0 0 0 14px #ffffff36, 0 0 0 36px #ffffff22; }
 .welcome-art-label { color: #68858c; text-shadow: 0 1px #fff; }

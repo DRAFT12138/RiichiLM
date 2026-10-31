@@ -85,18 +85,19 @@ export function Setup({
     <>
       <section className="welcome">
         <div className="welcome-copy">
-          <span className="welcome-kicker"><span /> {t("RIICHILM · 对局与探索")}</span>
-          <h1>{t("好牌，就在这一桌。")}</h1>
+          <span className="welcome-kicker"><span /> {t("RIICHILM · 学习与对局")}</span>
+          <h1>{t("让机器学打麻将。")}</h1>
           <p>
-            {t("挑选你的对手，落座开局。")}<br className="mobile-break" />{" "}
-            {t("摸、切、鸣、和，尽享立直麻将。")}</p>
+            {t("大语言模型 · 监督学习 · 强化学习")}<br />
+            {t("带上自训模型或外接 LLM，对局或观战。")}</p>
           <div className="welcome-tags">
             <span>
               <span className="status-dot" />
               {t("本地运行")}</span>
             <span>{t("四人立直麻将")}</span>
-            <span>{t("无需账号")}</span>
+            <span>{t("仅供学习与研究")}</span>
           </div>
+          <p className="welcome-scope">{t("请自备训练数据与模型；项目不提供数据集或预训练权重。")}</p>
         </div>
         <div className="welcome-art" aria-hidden="true">
           <span className="welcome-art-ring" />
