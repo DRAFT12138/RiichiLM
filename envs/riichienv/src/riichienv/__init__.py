@@ -1,0 +1,90 @@
+from . import consts, convert
+from ._riichienv import (
+    GameRule,
+    Kyoku,
+    Meld,
+    MeldType,
+    MjaiReplay,
+    Observation,
+    Observation3P,
+    Phase,
+    RiichiEnv,
+    Score,
+    Wind,
+    WinResult,
+    WinResultContext,
+    Yaku,
+    calculate_score,
+    calculate_shanten,
+    calculate_shanten_3p,
+    check_riichi_candidates,
+    get_all_yaku,
+    get_yaku_by_id,
+    parse_hand,
+    parse_tile,
+)
+from .action import Action, Action3P, ActionType
+from .game_mode import GameType
+from .hand import Conditions, HandEvaluator, HandEvaluator3P
+
+EAST = Wind.East
+SOUTH = Wind.South
+WEST = Wind.West
+NORTH = Wind.North
+
+
+def _get_viewer(self):
+    # Lazy import to avoid circular dependency: visualizer imports from riichienv
+    from riichienv.visualizer import GameViewer  # noqa: PLC0415
+
+    return GameViewer(self.mjai_log)
+
+
+RiichiEnv.get_viewer = _get_viewer  # type: ignore[attr-defined]
+
+
+__all__ = [
+    "consts",
+    "convert",
+    "WinResultContext",
+    "Kyoku",
+    "Meld",
+    "MeldType",
+    "Observation",
+    "Observation3P",
+    "MjaiReplay",
+    "Score",
+    "Wind",
+    "calculate_score",
+    "calculate_shanten",
+    "calculate_shanten_3p",
+    "check_riichi_candidates",
+    "parse_hand",
+    "parse_tile",
+    "Action",
+    "Action3P",
+    "ActionType",
+    "RiichiEnv",
+    "GameRule",
+    "Phase",
+    "GameType",
+    "WinResult",
+    "HandEvaluator",
+    "HandEvaluator3P",
+    "Conditions",
+    "EAST",
+    "SOUTH",
+    "WEST",
+    "NORTH",
+    "Yaku",
+    "get_yaku_by_id",
+    "get_all_yaku",
+]
+
+# The concrete Mahjong Soul log parser is optional at build time. Core rules,
+# standard MJAI replay and every other native export remain mandatory.
+from . import _riichienv as _native
+
+if hasattr(_native, "MjSoulReplay"):
+    MjSoulReplay = _native.MjSoulReplay
+    __all__.append("MjSoulReplay")

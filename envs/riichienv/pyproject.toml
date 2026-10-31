@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.9.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "riichienv"
+version = "0.4.10"
+description = "RiichiEnv source integrated into Mahjong for local development"
+authors = [{ name = "Kohei Ozaki", email = "19337+smly@users.noreply.github.com" }]
+requires-python = ">=3.10,<3.15"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["pyyaml>=6.0.3", "ipython", "pygments>=2.20.0"]
+
+[tool.maturin]
+python-source = "src"
+manifest-path = "riichienv-python/Cargo.toml"
+module-name = "riichienv._riichienv"
+include = ["src/riichienv/visualizer/assets/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,17 @@
+# @package data
+name: majsoul_policy
+input_schema: majang-policy-ntp/v2
+train_size: 1
+val_size: 0
+input_dim: 1
+batch_size: 8
+shared_context: true
+shared_max_tokens: 8192
+shared_max_branch_cells: 4194304
+shuffle: true
+drop_last: false
+num_workers: 0
+build_dir: data/training
+validation_fraction: 0.02
+validation_max_samples: null
+split_seed: 20261018

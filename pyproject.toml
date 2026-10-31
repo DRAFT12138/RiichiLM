@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools==81.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mahjong"
+version = "0.1.0"
+description = "Riichi Mahjong sequence models, reinforcement learning, and a local research arena"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "torch==2.14.0",
+  "lightning-fabric==2.6.6",
+  "hydra-core==1.3.7",
+  "omegaconf==2.3.1",
+  "tensorboard==2.21.0",
+  "psutil==7.2.2",
+  "transformers==5.19.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
+web = ["fastapi==0.135.1", "uvicorn==0.42.0", "pyyaml==6.0.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+markers = [
+  "cpu: CPU integration or deterministic recovery checks",
+  "gpu: requires the target AMD GPU and exclusive GPU use",
+  "fault: real process or filesystem fault checks",
+]
+
+[tool.setuptools.package-data]
+"mahjong.tokenizer" = ["resources/*.tsv", "resources/*.json"]
+
+"mahjong.web" = ["static/*.html", "static/assets/*"]
+"mahjong.arena" = ["resources/*.json"]

@@ -1,0 +1,5 @@
+# @package runtime
+device: cpu
+precision: 32-true
+deterministic: true
+cpu_threads: 1

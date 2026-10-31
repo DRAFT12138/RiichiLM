@@ -1,0 +1,9 @@
+# @package _global_
+experiment:
+  name: mahjong_policy
+optimizer:
+  lr: 0.0001
+training:
+  max_updates: 200
+validation:
+  every_updates: 5000

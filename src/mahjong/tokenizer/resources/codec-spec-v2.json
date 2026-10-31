@@ -1,0 +1,228 @@
+{
+  "implementation": "majang.tokenizer/2.0",
+  "binding": {
+    "name": "majang-4p-v2",
+    "vocab_sha256": "675c528d06fa8c9c36f49205f8380e006541abe0d468c191e39f321f2956fb0f",
+    "sequence_schema_version": "majang-sequence/1.3",
+    "ir_schema_version": "majang-ir/2",
+    "task": "policy-latest-hand/2"
+  },
+  "source": "docs/design-majang-sequence-tokenizer.md sections 6.4, 7.1, 8.1; docs/tokenizer/policy-sequence-v2.md",
+  "input_validation_owner": "preprocessing",
+  "action_shapes": {
+    "A_PASS": [],
+    "A_DISCARD": [
+      "tile",
+      "discard"
+    ],
+    "A_RIICHI_DISCARD": [
+      "tile",
+      "discard"
+    ],
+    "A_TSUMO_WIN": [],
+    "A_RON": [
+      "seat",
+      "tile"
+    ],
+    "A_CHI": [
+      "seat",
+      "tile",
+      "tile",
+      "tile"
+    ],
+    "A_PON": [
+      "seat",
+      "tile",
+      "tile",
+      "tile"
+    ],
+    "A_DAIMINKAN": [
+      "seat",
+      "tile",
+      "tile",
+      "tile",
+      "tile"
+    ],
+    "A_ANKAN": [
+      "tile",
+      "tile",
+      "tile",
+      "tile"
+    ],
+    "A_KAKAN": [
+      "natural",
+      "tile"
+    ],
+    "A_ABORT_KYUUSHU": []
+  },
+  "event_fields": {
+    "EV_GAME_START": [
+      "header"
+    ],
+    "EV_ROUND_START": [
+      "state"
+    ],
+    "EV_DRAW": [
+      "actor",
+      "tile",
+      "draw_kind"
+    ],
+    "EV_DISCARD": [
+      "actor",
+      "tile",
+      "discard_kind",
+      "riichi_tile"
+    ],
+    "EV_CHI": [
+      "actor",
+      "target",
+      "tile",
+      "consumed",
+      "meld_id",
+      "trigger_id"
+    ],
+    "EV_PON": [
+      "actor",
+      "target",
+      "tile",
+      "consumed",
+      "meld_id",
+      "trigger_id"
+    ],
+    "EV_DAIMINKAN": [
+      "actor",
+      "target",
+      "tile",
+      "consumed",
+      "meld_id",
+      "trigger_id"
+    ],
+    "EV_ANKAN_ATTEMPT": [
+      "actor",
+      "base_tile",
+      "consumed",
+      "meld_id",
+      "window_id"
+    ],
+    "EV_KAKAN_ATTEMPT": [
+      "actor",
+      "tile",
+      "meld_id",
+      "window_id"
+    ],
+    "EV_KAN_COMMIT": [
+      "actor",
+      "meld_id"
+    ],
+    "EV_KAN_ROBBED": [
+      "actor",
+      "meld_id",
+      "window_id"
+    ],
+    "EV_DORA_REVEAL": [
+      "tile"
+    ],
+    "EV_RIICHI_DECLARE": [
+      "actor"
+    ],
+    "EV_RIICHI_ACCEPT": [
+      "actor"
+    ],
+    "EV_RESPONSE_OPEN": [
+      "window"
+    ],
+    "EV_RESPONSE_CLOSE": [
+      "window_id",
+      "resolution",
+      "result"
+    ],
+    "EV_WIN": [
+      "win_group"
+    ],
+    "EV_DRAW_END": [
+      "result"
+    ],
+    "EV_ABORT_END": [
+      "reason",
+      "actor",
+      "result"
+    ],
+    "EV_NAGASHI": [
+      "result"
+    ],
+    "EV_SETTLEMENT": [
+      "settlement"
+    ],
+    "EV_REVEAL": [
+      "reveal"
+    ],
+    "EV_ROUND_END": [
+      "next_state"
+    ],
+    "EV_GAME_END": [
+      "final_result"
+    ],
+    "EV_PROTOCOL_NOOP": [
+      "metadata"
+    ],
+    "EV_EXTENSION": [
+      "extension"
+    ]
+  },
+  "policy_header_fields": [
+    "mode",
+    "round_wind",
+    "round_number",
+    "honba",
+    "kyotaku",
+    "dealer",
+    "scores",
+    "seat_winds"
+  ],
+  "policy_history": [
+    "EV_DRAW",
+    "EV_DISCARD",
+    "EV_CHI",
+    "EV_PON",
+    "EV_DAIMINKAN",
+    "EV_ANKAN_ATTEMPT",
+    "EV_KAKAN_ATTEMPT",
+    "EV_KAN_COMMIT",
+    "EV_DORA_REVEAL",
+    "EV_RIICHI_DECLARE",
+    "EV_RIICHI_ACCEPT"
+  ],
+  "policy_history_filter_owner": "preprocessing",
+  "event_ids": "preserve supplied order and IDs; no renumbering or synthesis",
+  "hand_state": [
+    "HAND_STATE",
+    "sorted hands",
+    "HAND_MELDS_SEP",
+    "meld objects ordered by created_event",
+    "END_HAND_STATE"
+  ],
+  "policy_prefix": [
+    "BOS",
+    "FORMAT_V1",
+    "TASK_POLICY",
+    "HEADER",
+    "PolicyHeader Object",
+    "END_HEADER",
+    "HISTORY",
+    "FULL_HISTORY",
+    "visible events",
+    "END_HISTORY",
+    "hand_state",
+    "DECISION"
+  ],
+  "action_suffix": [
+    "ActionPayload",
+    "END_DECISION"
+  ],
+  "offline_eos": "optional after END_DECISION only",
+  "object_order": "registered F token IDs ascending; then UTF8 string key bytes ascending",
+  "tile_order": "base tile index ascending; normal before red; hidden last",
+  "latest_state": "rebuild from persistent projected events and only the latest self hand/meld state",
+  "meld_references": "supplied by preprocessing; never resolved or corrected by codec",
+  "binding_scope": "codec resources only; excludes registry, model, training and context budget"
+}

@@ -1,0 +1,5 @@
+# @package training
+max_updates: 200
+accumulate_grad_batches: 1
+scheduler: null
+max_consecutive_skips: 32

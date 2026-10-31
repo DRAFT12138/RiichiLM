@@ -1,0 +1,17 @@
+name: qwen3
+input_schema: majang-policy-ntp/v2
+num_hidden_layers: 16
+hidden_size: 768
+intermediate_size: 2048
+num_attention_heads: 12
+num_key_value_heads: 4
+head_dim: 64
+vocab_size: 1024
+max_position_embeddings: 8192
+attn_implementation: sdpa
+tie_word_embeddings: true
+rope_theta: 1000000.0
+use_cache: false
+bos_token_id: null
+eos_token_id: null
+pad_token_id: null

@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+target/
+/data/
+/outputs/
+/.env
+/.env.*
+/envs/riichienv/src/riichienv/*.so
+/src/mahjong/web/static/
+web/node_modules
+web/test-results/
+web/playwright-report/

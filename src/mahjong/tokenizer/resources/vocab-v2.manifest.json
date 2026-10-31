@@ -1,0 +1,38 @@
+{
+  "name": "majang-4p-v2",
+  "status": "design_candidate_not_implemented",
+  "vocab_size": 1024,
+  "pad_token_id": 0,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "unk_token_id": null,
+  "mask_token_id": 20,
+  "format_token_id": 40,
+  "vocab_sha256": "675c528d06fa8c9c36f49205f8380e006541abe0d468c191e39f321f2956fb0f",
+  "encoding": "UTF-8; LF; columns id,token,category,status; numeric ID order",
+  "categories": {
+    "structure": 50,
+    "reserved": 192,
+    "tile": 38,
+    "seat": 8,
+    "enum": 111,
+    "event": 26,
+    "action": 11,
+    "yaku": 45,
+    "field": 159,
+    "small_integer": 128,
+    "byte": 256
+  },
+  "active_count": 832,
+  "reserved_count": 192,
+  "source_report_sha256": "b1b1145855febd299f9ac17043b596726323f5bfbf97993c9cfa6b2b2e3ca63f",
+  "sequence_schema_version": "majang-sequence/1.3",
+  "ir_schema_version": "majang-ir/2",
+  "task": "policy-latest-hand/2",
+  "hand_state_ids": {
+    "start": 640,
+    "separator": 641,
+    "end": 642
+  },
+  "sequence_rule": "Persistent visible events plus exactly one latest self hand/meld block, followed by DECISION; legal actions remain sidecar."
+}

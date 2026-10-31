@@ -1,0 +1,66 @@
+# Bounded development defaults; quality thresholds require experiment calibration.
+seed: 20261025
+rounds: 2
+collection:
+  train_matches: 2
+  validation_matches: 4
+  max_attempts: 6
+  max_failed_fraction: 0.0
+  max_transitions: 20000
+  max_decisions: 60000
+  max_seconds: 3600.0
+  max_bytes: 268435456
+  max_round_bytes: 1073741824
+  max_record_bytes: 2097152
+  max_records: 100000
+  max_offset_bytes: 33554432
+  max_target_bytes: 67108864
+  max_failure_bytes: 16777216
+ppo:
+  epochs: 2
+  batch_size: 1
+  max_updates: 128
+  clip: 0.1
+  lam: 1.0
+  beta: 0.02
+  c_v: 0.5
+  c_e: 0.0
+  actor_lr: 0.000001
+  critic_lr: 0.0001
+critic:
+  use_oracle: true
+  oracle_width: 128
+  value_width: 256
+  warmup_rounds: 10
+  min_matches: 4
+  consecutive_windows: 2
+  min_ev: 0.0
+  max_rmse: 1.0
+  max_bias: 0.2
+control:
+  actor_grad_norm: 0.5
+  critic_grad_norm: 0.5
+  soft_kl: 0.02
+  hard_kl: 0.1
+  max_ratio: 20.0
+  probe_size: 128
+  min_probe_samples: 32
+  probe_interval: 16
+  strict_post_step: false
+  score_tolerance: 0.00002
+  parameter_check_rounds: [0]
+  full_readback_rounds: [0]
+pool:
+  active_capacity: 16
+  physical_capacity: 18
+  byte_budget: 8000000000
+  history_interval: 10
+  table_weights: [0.5, 0.3, 0.2]
+evaluation:
+  monitor_seed: 20261026
+  heldout_seed: 20261027
+  seed_groups: 1
+  bootstrap_samples: 1000
+  confidence: 0.95
+  regression_tolerance: 1.0
+  max_failed_fraction: 0.0

@@ -1,0 +1,2261 @@
+use std::collections::HashMap;
+#[cfg(feature = "python")]
+use std::sync::Arc;
+
+use serde_json::Value;
+
+use crate::action::{Action, ActionType, Phase};
+use crate::errors::{RiichiError, RiichiResult};
+use crate::observation::Observation;
+use crate::parser::tid_to_mjai;
+use crate::replay::Action as LogAction;
+use crate::replay::MjaiEvent;
+use crate::rule::GameRule;
+use crate::types::{Conditions, INITIAL_HAND_SIZE, Meld, MeldType, WinResult, Wind};
+
+pub mod event_handler;
+pub mod game_mode;
+pub mod legal_actions;
+pub mod player;
+pub mod wall;
+use event_handler::GameStateEventHandler;
+use game_mode::GameModeConfig;
+use legal_actions::GameStateLegalActions;
+use player::PlayerState;
+use wall::WallState;
+
+const NP: usize = 4;
+
+#[cfg_attr(feature = "python", pyo3::pyclass(from_py_object))]
+#[derive(Debug, Clone)]
+pub struct GameState {
+    pub wall: WallState,
+    pub players: [PlayerState; 4],
+
+    pub current_player: u8,
+    pub turn_count: u32,
+    pub is_done: bool,
+    pub needs_tsumo: bool,
+    pub needs_initialize_next_round: bool,
+    /// Project bridge owns round termination through its complete profile.
+    /// Ordinary native clients retain automatic advancement.
+    pub policy_external_rounds: bool,
+    pub policy_temp_furiten_own_draw: bool,
+    pub pending_oya_won: bool,
+    pub pending_is_draw: bool,
+
+    pub riichi_sticks: u32,
+    pub phase: Phase,
+    pub active_players: Vec<u8>,
+    pub last_discard: Option<(u8, u8)>,
+    pub current_claims: HashMap<u8, Vec<Action>>,
+    pub pending_kan: Option<(u8, Action)>,
+
+    pub oya: u8,
+    pub honba: u8,
+    pub kyoku_idx: u8,
+    pub round_wind: u8,
+
+    pub is_rinshan_flag: bool,
+    pub is_first_turn: bool,
+    pub riichi_pending_acceptance: Option<u8>,
+    pub drawn_tile: Option<u8>,
+
+    pub win_results: HashMap<u8, WinResult>,
+    pub last_win_results: HashMap<u8, WinResult>,
+    pub round_end_scores: Option<Vec<i32>>,
+
+    pub mjai_log: Vec<String>,
+    pub player_event_counts: [usize; NP],
+    pub kyoku_start_event_counts: [usize; NP],
+    pub mjai_log_per_player: [Vec<String>; NP],
+
+    /// Pre-computed progression tuples for the current round (shared by all players).
+    /// Incrementally updated in _push_mjai_event to avoid O(N²) JSON re-parsing.
+    /// Wrapped in Arc for O(1) snapshot when creating observations.
+    #[cfg(feature = "python")]
+    pub round_seq_progression: Arc<Vec<[u16; 5]>>,
+    #[cfg(feature = "python")]
+    pub round_seq_prog_pending_reach: Option<u8>,
+    /// When true, incrementally track progression tuples for sequence feature encoding.
+    /// Disable when sequence features are not needed to avoid overhead.
+    #[cfg(feature = "python")]
+    pub enable_seq_caching: bool,
+
+    pub mode: GameModeConfig,
+    pub game_mode: u8,
+    pub skip_mjai_logging: bool,
+    pub seed: Option<u64>,
+    pub rule: GameRule,
+    pub last_error: Option<String>,
+    pub is_after_kan: bool,
+
+    pub riichi_sutehais: [Option<u8>; NP], // Tile discarded when declaring riichi
+    pub last_tedashis: [Option<u8>; NP],   // Last hand discard (not tsumogiri)
+}
+
+impl GameState {
+    pub fn np(&self) -> usize {
+        NP
+    }
+
+    pub fn new(
+        game_mode: u8,
+        skip_mjai_logging: bool,
+        seed: Option<u64>,
+        round_wind: u8,
+        rule: GameRule,
+    ) -> Self {
+        let mode = GameModeConfig::from_game_mode(game_mode, rule);
+        let players = [(); 4].map(|_| PlayerState::new(mode.starting_score()));
+
+        let wall = WallState::new(seed);
+
+        let mut state = Self {
+            wall,
+            players,
+            current_player: 0,
+            turn_count: 0,
+            is_done: false,
+            needs_tsumo: false,
+            needs_initialize_next_round: false,
+            policy_external_rounds: false,
+            policy_temp_furiten_own_draw: false,
+            pending_oya_won: false,
+            pending_is_draw: false,
+            riichi_sticks: 0,
+            phase: Phase::WaitAct,
+            active_players: Vec::new(),
+            last_discard: None,
+            current_claims: HashMap::new(),
+            pending_kan: None,
+            oya: 0,
+            honba: 0,
+            kyoku_idx: 0,
+            round_wind,
+            is_rinshan_flag: false,
+            is_first_turn: true,
+            riichi_pending_acceptance: None,
+            drawn_tile: None,
+            win_results: HashMap::new(),
+            last_win_results: HashMap::new(),
+            round_end_scores: None,
+            mjai_log: Vec::new(),
+            player_event_counts: [0; NP],
+            kyoku_start_event_counts: [0; NP],
+            mjai_log_per_player: Default::default(),
+            #[cfg(feature = "python")]
+            round_seq_progression: Arc::new(Vec::new()),
+            #[cfg(feature = "python")]
+            round_seq_prog_pending_reach: None,
+            #[cfg(feature = "python")]
+            enable_seq_caching: false,
+            mode,
+            game_mode,
+            skip_mjai_logging,
+            seed,
+            rule,
+            last_error: None,
+            is_after_kan: false,
+            riichi_sutehais: [None; NP],
+            last_tedashis: [None; NP],
+        };
+
+        if !state.skip_mjai_logging {
+            let mut ev = serde_json::Map::new();
+            ev.insert("type".to_string(), Value::String("start_game".to_string()));
+            state._push_mjai_event(Value::Object(ev));
+        }
+
+        // Initial setup
+        state._initialize_round(0, round_wind, 0, 0, None, None);
+        state
+    }
+
+    /// Clear logs and event counters in preparation for a new game.
+    /// Call `_initialize_round()` afterwards to set up the first round.
+    pub fn reset(&mut self) {
+        self.mjai_log = Vec::new();
+        self.mjai_log_per_player = Default::default();
+        self.player_event_counts = [0; NP];
+        self.kyoku_start_event_counts = [0; NP];
+        #[cfg(feature = "python")]
+        {
+            Arc::make_mut(&mut self.round_seq_progression).clear();
+            self.round_seq_prog_pending_reach = None;
+        }
+
+        if !self.skip_mjai_logging {
+            let mut ev = serde_json::Map::new();
+            ev.insert("type".to_string(), Value::String("start_game".to_string()));
+            self._push_mjai_event(Value::Object(ev));
+        }
+    }
+
+    pub fn get_observation(&mut self, player_id: u8) -> Observation {
+        let pid = player_id as usize;
+
+        let masked_hands: [Vec<u8>; 4] = std::array::from_fn(|i| {
+            if i == pid {
+                self.players[i].hand.clone()
+            } else {
+                Vec::new()
+            }
+        });
+
+        let legal_actions = if self.is_done {
+            Vec::new()
+        } else if (self.phase == Phase::WaitAct && self.current_player == player_id)
+            || (self.phase == Phase::WaitResponse && self.active_players.contains(&player_id))
+        {
+            self._get_legal_actions_internal(player_id)
+        } else {
+            Vec::new()
+        };
+
+        // Return incremental delta events (for new_events property, debugging, etc.)
+        let old_count = self.player_event_counts[pid];
+        let full_log_len = self.mjai_log_per_player[pid].len();
+        let new_events = if old_count < full_log_len {
+            self.mjai_log_per_player[pid][old_count..].to_vec()
+        } else {
+            Vec::new()
+        };
+        self.player_event_counts[pid] = full_log_len;
+
+        let calc = crate::hand_evaluator::HandEvaluator::new(
+            self.players[pid].hand.clone(),
+            self.players[pid].melds.clone(),
+        );
+        let waits = calc.get_waits_u8();
+        let is_tenpai = !waits.is_empty();
+
+        let melds: [Vec<Meld>; 4] = std::array::from_fn(|i| self.players[i].melds.clone());
+        let discards: [Vec<u8>; 4] = std::array::from_fn(|i| self.players[i].discards.clone());
+        let scores: [i32; 4] = std::array::from_fn(|i| self.players[i].score);
+        let riichi_declared: [bool; 4] = std::array::from_fn(|i| self.players[i].riichi_declared);
+
+        let mut obs = Observation::new(
+            player_id,
+            masked_hands,
+            melds,
+            discards,
+            self.wall.dora_indicators.clone(),
+            scores,
+            riichi_declared,
+            legal_actions,
+            new_events,
+            self.honba,
+            self.riichi_sticks,
+            self.round_wind,
+            self.oya,
+            self.kyoku_idx,
+            waits,
+            is_tenpai,
+            self.riichi_sutehais,
+            self.last_tedashis,
+            self.last_discard.map(|(_pid, tile)| tile as u32),
+            self.drawn_tile,
+        );
+
+        obs.forced_tedashi = self.is_forced_tedashi(player_id);
+
+        // Attach pre-computed progression snapshot.
+        #[cfg(feature = "python")]
+        if self.enable_seq_caching {
+            obs.cached_progression = Some((*self.round_seq_progression).clone());
+        }
+
+        obs
+    }
+
+    pub fn get_observation_for_replay(
+        &mut self,
+        pid: u8,
+        env_action: &Action,
+        log_action_str: &str,
+    ) -> RiichiResult<Observation> {
+        let original_phase = self.phase;
+        let original_active_players = self.active_players.clone();
+        let original_claims = self.current_claims.clone();
+        let original_riichi = self.players[pid as usize].riichi_declared;
+
+        match env_action.action_type {
+            ActionType::Ron | ActionType::Chi | ActionType::Pon | ActionType::Daiminkan => {
+                self.phase = Phase::WaitResponse;
+                self.active_players = vec![pid];
+                self.current_claims
+                    .entry(pid)
+                    .or_default()
+                    .push(env_action.clone());
+            }
+            _ => {}
+        }
+
+        let mut obs = self.get_observation(pid);
+
+        let mut exists = obs
+            ._legal_actions
+            .iter()
+            .any(|a| a.action_type == env_action.action_type && a.tile == env_action.tile);
+
+        if !exists
+            && env_action.action_type == ActionType::Discard
+            && self.players[pid as usize].riichi_declared
+        {
+            self.players[pid as usize].riichi_declared = false;
+            let new_obs = self.get_observation(pid);
+            let is_legal_retry = new_obs
+                ._legal_actions
+                .iter()
+                .any(|a| a.action_type == ActionType::Discard && a.tile == env_action.tile);
+
+            if is_legal_retry {
+                obs = new_obs;
+                exists = true;
+            } else {
+                self.players[pid as usize].riichi_declared = original_riichi;
+            }
+        }
+
+        self.phase = original_phase;
+        self.active_players = original_active_players;
+        self.current_claims = original_claims;
+
+        if !exists {
+            return Err(RiichiError::InvalidState {
+                message: format!(
+                    "Replay desync:\n  Env action: {:?}\n  Log action: {}\n  Self state:\n    phase: {:?}\n    drawn: {:?}",
+                    env_action, log_action_str, self.phase, self.drawn_tile
+                ),
+            });
+        }
+
+        Ok(obs)
+    }
+
+    pub fn step(&mut self, actions: &HashMap<u8, Action>) {
+        if self.is_done {
+            return;
+        }
+
+        if self.needs_initialize_next_round {
+            self._initialize_next_round(self.pending_oya_won, self.pending_is_draw);
+            return;
+        }
+        // Validation
+        let np = NP;
+        let mut normalized_kakan = None;
+        for pid in 0..np {
+            if let Some(act) = actions.get(&(pid as u8)) {
+                let legals = self._get_legal_actions_internal(pid as u8);
+                let is_valid = legals.iter().any(|l| {
+                    if l.action_type != act.action_type {
+                        return false;
+                    }
+
+                    if act.action_type == ActionType::Kakan {
+                        normalized_kakan = act.resolve_kakan(l);
+                        return normalized_kakan.is_some();
+                    }
+
+                    let tiles_match = l.tile == act.tile;
+                    let consumes_match = l.consume_tiles == act.consume_tiles;
+
+                    if tiles_match {
+                        if consumes_match {
+                            return true;
+                        }
+                        // Allow empty consume for Discard, Riichi, Tsumo, Ron, Pass
+                        if act.consume_tiles.is_empty()
+                            && matches!(
+                                l.action_type,
+                                ActionType::Discard
+                                    | ActionType::Riichi
+                                    | ActionType::Tsumo
+                                    | ActionType::Ron
+                                    | ActionType::Pass
+                            )
+                        {
+                            return true;
+                        }
+                    }
+
+                    if consumes_match && l.action_type == ActionType::Ankan {
+                        return true;
+                    }
+
+                    // Allow None from python for context-implied actions
+                    if act.tile.is_none() {
+                        return matches!(
+                            l.action_type,
+                            ActionType::Tsumo
+                                | ActionType::Ron
+                                | ActionType::Riichi
+                                | ActionType::KyushuKyuhai
+                                | ActionType::Kita
+                        );
+                    }
+                    false
+                });
+
+                if !is_valid {
+                    let reason = format!("Error: Illegal Action by Player {}", pid);
+                    self.last_error = Some(reason.clone());
+                    self._trigger_ryukyoku(&reason);
+                    return;
+                }
+            }
+        }
+
+        // --- Phase: WaitAct (Discards, Riichi, Tsumo, Kan) ---
+        if self.phase == Phase::WaitAct {
+            let pid = self.current_player;
+            if let Some(act) = actions.get(&pid) {
+                let act = normalized_kakan.as_ref().unwrap_or(act);
+                match act.action_type {
+                    ActionType::Discard => {
+                        if let Some(tile) = act.tile {
+                            let mut tsumogiri = false;
+                            let mut valid = false;
+                            if let Some(dt) = self.drawn_tile
+                                && dt == tile
+                            {
+                                tsumogiri = true;
+                                valid = true;
+                            }
+                            if let Some(idx) = self.players[pid as usize]
+                                .hand
+                                .iter()
+                                .position(|&t| t == tile)
+                            {
+                                self.players[pid as usize].hand.remove(idx);
+                                self.players[pid as usize].hand.sort();
+                                valid = true;
+                                if let Some(dt) = self.drawn_tile
+                                    && dt == tile
+                                {
+                                    tsumogiri = true;
+                                }
+                            }
+                            if valid {
+                                self._resolve_discard(pid, tile, tsumogiri);
+                            }
+                        }
+                    }
+                    ActionType::KyushuKyuhai => {
+                        self._trigger_ryukyoku("kyushu_kyuhai");
+                    }
+                    ActionType::Riichi => {
+                        // Declare Riichi. `!riichi_stage` guards against a
+                        // second Riichi action arriving while the previous
+                        // one is still mid-declaration (between the reach
+                        // event and its committing discard).
+                        if self.players[pid as usize].score >= 1000
+                            && self.wall.drawable_count >= 4
+                            && !self.players[pid as usize].riichi_declared
+                            && !self.players[pid as usize].riichi_stage
+                        {
+                            self.players[pid as usize].riichi_stage = true;
+                            if !self.skip_mjai_logging {
+                                let mut ev = serde_json::Map::new();
+                                ev.insert("type".to_string(), Value::String("reach".to_string()));
+                                ev.insert("actor".to_string(), Value::Number(pid.into()));
+                                self._push_mjai_event(Value::Object(ev));
+                            }
+                            if let Some(t) = act.tile {
+                                let mut tsumogiri = false;
+                                if let Some(dt) = self.drawn_tile
+                                    && dt == t
+                                {
+                                    tsumogiri = true;
+                                }
+                                if let Some(idx) =
+                                    self.players[pid as usize].hand.iter().position(|&x| x == t)
+                                {
+                                    self.players[pid as usize].hand.remove(idx);
+                                    self.players[pid as usize].hand.sort();
+                                }
+                                self._resolve_discard(pid, t, tsumogiri);
+                            }
+                        }
+                    }
+                    ActionType::Ankan => {
+                        // Ankan Logic
+                        let tile = act.tile.or(act.consume_tiles.first().copied()).unwrap_or(0);
+                        let mut chankan_ronners = Vec::new();
+                        if self.rule.allows_ron_on_ankan_for_kokushi_musou {
+                            for i in 0..np as u8 {
+                                if i == pid {
+                                    continue;
+                                }
+
+                                // Check Kokushi Only
+                                let hand = &self.players[i as usize].hand;
+                                let melds = &self.players[i as usize].melds;
+
+                                // Furiten check
+                                let tile_class = tile / 4;
+                                let in_discards = self.players[i as usize]
+                                    .discards
+                                    .iter()
+                                    .any(|&d| d / 4 == tile_class);
+                                if in_discards {
+                                    continue;
+                                }
+
+                                let p_wind = (i + np as u8 - self.oya) % np as u8;
+                                let cond = Conditions {
+                                    tsumo: false,
+                                    riichi: self.players[i as usize].riichi_declared,
+                                    chankan: true,
+                                    player_wind: Wind::from(p_wind),
+                                    round_wind: Wind::from(self.round_wind),
+                                    ..Default::default()
+                                };
+                                let calc = crate::hand_evaluator::HandEvaluator::new(
+                                    hand.clone(),
+                                    melds.clone(),
+                                );
+                                let res = calc.calc(
+                                    tile,
+                                    self.wall.dora_indicators.clone(),
+                                    vec![],
+                                    Some(cond),
+                                );
+
+                                // 42=Kokushi, 49=Kokushi13
+                                if res.is_win && (res.yaku.contains(&42) || res.yaku.contains(&49))
+                                {
+                                    chankan_ronners.push(i);
+                                    self.current_claims.entry(i).or_default().push(Action::new(
+                                        ActionType::Ron,
+                                        Some(tile),
+                                        vec![],
+                                        Some(i),
+                                    ));
+                                }
+                            }
+                        }
+
+                        if !chankan_ronners.is_empty() {
+                            self.pending_kan = Some((pid, act.clone()));
+                            self.phase = Phase::WaitResponse;
+                            self.active_players = chankan_ronners;
+                            self.last_discard = Some((pid, tile));
+                        } else {
+                            self._resolve_kan(pid, act.clone());
+                        }
+                    }
+                    ActionType::Kakan => {
+                        let tile = act.tile.or(act.consume_tiles.first().copied()).unwrap_or(0);
+                        let p_idx = pid as usize;
+
+                        // Update state BEFORE logging/waiting to keep observations in sync
+                        if let Some(idx) = self.players[p_idx].hand.iter().position(|&x| x == tile)
+                        {
+                            self.players[p_idx].hand.remove(idx);
+                        }
+                        for m in self.players[p_idx].melds.iter_mut() {
+                            if m.meld_type == crate::types::MeldType::Pon
+                                && m.tiles[0] / 4 == tile / 4
+                            {
+                                m.meld_type = crate::types::MeldType::Kakan;
+                                m.tiles.push(tile);
+                                m.tiles.sort();
+                                break;
+                            }
+                        }
+
+                        // Log Kakan immediately (before Chankan check)
+                        if !self.skip_mjai_logging {
+                            let mut ev = serde_json::Map::new();
+                            ev.insert("type".to_string(), Value::String("kakan".to_string()));
+                            ev.insert("actor".to_string(), Value::Number(pid.into()));
+                            ev.insert("pai".to_string(), Value::String(tid_to_mjai(tile)));
+                            let cons: Vec<String> =
+                                act.consume_tiles.iter().map(|&t| tid_to_mjai(t)).collect();
+                            ev.insert(
+                                "consumed".to_string(),
+                                serde_json::to_value(cons).expect("valid JSON"),
+                            );
+                            self._push_mjai_event(Value::Object(ev));
+                        }
+
+                        // Reveal any pending kan doras from previous kans
+                        while self.wall.pending_kan_dora_count > 0 {
+                            self.wall.pending_kan_dora_count -= 1;
+                            self._reveal_kan_dora();
+                        }
+
+                        // Kakan Logic
+                        // Check Chankan
+                        let tile = act.tile.or(act.consume_tiles.first().copied()).unwrap_or(0);
+                        let mut chankan_ronners = Vec::new();
+                        for i in 0..np as u8 {
+                            if i == pid {
+                                continue;
+                            }
+                            // Check WinResult
+                            let hand = &self.players[i as usize].hand;
+                            let melds = &self.players[i as usize].melds;
+                            let p_wind = (i + np as u8 - self.oya) % np as u8;
+                            let cond = Conditions {
+                                tsumo: false,
+                                riichi: self.players[i as usize].riichi_declared,
+                                double_riichi: self.players[i as usize].double_riichi_declared,
+                                ippatsu: self.players[i as usize].ippatsu_cycle,
+                                player_wind: Wind::from(p_wind),
+                                round_wind: Wind::from(self.round_wind),
+                                chankan: true,
+                                haitei: false,
+                                houtei: false,
+                                rinshan: false,
+                                tsumo_first_turn: false,
+                                riichi_sticks: self.riichi_sticks,
+                                honba: self.honba as u32,
+                                ..Default::default()
+                            };
+                            let calc = crate::hand_evaluator::HandEvaluator::new(
+                                hand.clone(),
+                                melds.clone(),
+                            );
+
+                            // Check Furiten
+                            let mut is_furiten = false;
+                            let waits = calc.get_waits_u8();
+                            for &w in &waits {
+                                if self.players[i as usize]
+                                    .discards
+                                    .iter()
+                                    .any(|&d| d / 4 == w)
+                                {
+                                    is_furiten = true;
+                                    break;
+                                }
+                            }
+                            if self.players[i as usize].missed_agari_riichi
+                                || self.players[i as usize].missed_agari_doujun
+                            {
+                                is_furiten = true;
+                            }
+
+                            // If valid:
+                            let res = if !is_furiten {
+                                calc.calc(
+                                    tile,
+                                    self.wall.dora_indicators.clone(),
+                                    vec![],
+                                    Some(cond),
+                                )
+                            } else {
+                                crate::types::WinResult::new(
+                                    false,
+                                    false,
+                                    0,
+                                    0,
+                                    0,
+                                    vec![],
+                                    0,
+                                    0,
+                                    None,
+                                    false,
+                                )
+                            };
+
+                            if res.is_win && (res.yakuman || res.han >= 1) {
+                                // Add Ron action offer
+                                chankan_ronners.push(i);
+                                self.current_claims.entry(i).or_default().push(Action::new(
+                                    ActionType::Ron,
+                                    Some(tile),
+                                    vec![],
+                                    Some(i),
+                                ));
+                            }
+                        }
+
+                        if !chankan_ronners.is_empty() {
+                            self.pending_kan = Some((pid, act.clone()));
+                            self.phase = Phase::WaitResponse;
+                            self.active_players = chankan_ronners;
+                            self.last_discard = Some((pid, tile)); // Treat Kakan tile as discard for Ron targeting
+                        } else {
+                            self._resolve_kan(pid, act.clone());
+                        }
+                    }
+                    ActionType::Tsumo => {
+                        let hand = &self.players[pid as usize].hand;
+                        let melds = &self.players[pid as usize].melds;
+                        let p_wind = (pid + np as u8 - self.oya) % np as u8;
+                        let cond = Conditions {
+                            tsumo: true,
+                            riichi: self.players[pid as usize].riichi_declared,
+                            double_riichi: self.players[pid as usize].double_riichi_declared,
+                            ippatsu: self.players[pid as usize].ippatsu_cycle,
+                            haitei: self.wall.drawable_count == 0 && !self.is_rinshan_flag,
+                            rinshan: self.is_rinshan_flag,
+                            tsumo_first_turn: self.is_first_turn
+                                && self.players.iter().all(|p| p.melds.is_empty()),
+                            player_wind: Wind::from(p_wind),
+                            round_wind: Wind::from(self.round_wind),
+                            riichi_sticks: self.riichi_sticks,
+                            honba: self.honba as u32,
+                            ..Default::default()
+                        };
+                        let calc =
+                            crate::hand_evaluator::HandEvaluator::new(hand.clone(), melds.clone());
+                        let win_tile = self.drawn_tile.unwrap_or(0);
+                        let ura_indicators = if self.players[pid as usize].riichi_declared {
+                            self._get_ura_indicators()
+                        } else {
+                            vec![]
+                        };
+                        let mut res = calc.calc(
+                            win_tile,
+                            self.wall.dora_indicators.clone(),
+                            ura_indicators,
+                            Some(cond.clone()),
+                        );
+
+                        // Cap double yakuman patterns when not enabled per rule flags
+                        if res.yakuman && res.han > 13 {
+                            let mut cap = 0u32;
+                            for &y in &res.yaku {
+                                match y {
+                                    47 if !self.rule.is_junsei_chuurenpoutou_double => cap += 13,
+                                    48 if !self.rule.is_suuankou_tanki_double => cap += 13,
+                                    49 if !self.rule.is_kokushi_musou_13machi_double => cap += 13,
+                                    50 if !self.rule.is_daisuushii_double => cap += 13,
+                                    _ => {}
+                                }
+                            }
+                            if cap > 0 {
+                                res.han = res.han.saturating_sub(cap).max(13);
+                                let capped = crate::score::calculate_score(
+                                    res.han as u8,
+                                    0,
+                                    pid == self.oya,
+                                    cond.tsumo,
+                                    cond.honba,
+                                    np as u8,
+                                );
+                                res.ron_agari = capped.pay_ron;
+                                res.tsumo_agari_oya = capped.pay_tsumo_oya;
+                                res.tsumo_agari_ko = capped.pay_tsumo_ko;
+                            }
+                        }
+
+                        if res.is_win {
+                            let mut deltas = vec![0i32; np];
+                            let mut total_win = 0;
+
+                            // Check Pao
+                            let mut pao_payer = None;
+                            let mut pao_yakuman_val = 0;
+                            let mut total_yakuman_val = 0;
+
+                            if res.yakuman {
+                                for &yid in &res.yaku {
+                                    let val = match yid {
+                                        47 if self.rule.is_junsei_chuurenpoutou_double => 2,
+                                        48 if self.rule.is_suuankou_tanki_double => 2,
+                                        49 if self.rule.is_kokushi_musou_13machi_double => 2,
+                                        50 if self.rule.is_daisuushii_double => 2,
+                                        _ => 1,
+                                    };
+                                    total_yakuman_val += val;
+                                    if let Some(liable) =
+                                        self.players[pid as usize].pao.get(&(yid as u8))
+                                    {
+                                        pao_yakuman_val += val;
+                                        pao_payer = Some(*liable);
+                                    }
+                                }
+                            }
+
+                            if pao_yakuman_val > 0 {
+                                let unit = if pid == self.oya { 48000 } else { 32000 };
+                                let honba_total = self.honba as i32 * (np as i32 - 1) * 100;
+
+                                if let Some(pp) = pao_payer {
+                                    if self.rule.yakuman_pao_is_liability_only {
+                                        // Majsoul: PAO pays PAO portion only, non-PAO split normally
+                                        let pao_amt = pao_yakuman_val * unit + honba_total;
+                                        let non_pao_yakuman_val =
+                                            total_yakuman_val - pao_yakuman_val;
+
+                                        deltas[pp as usize] -= pao_amt;
+                                        total_win += pao_amt;
+
+                                        if non_pao_yakuman_val > 0 {
+                                            if pid == self.oya {
+                                                let share = non_pao_yakuman_val * 16000;
+                                                for i in 0..np as u8 {
+                                                    if i != pid {
+                                                        deltas[i as usize] -= share;
+                                                        total_win += share;
+                                                    }
+                                                }
+                                            } else {
+                                                let oya_pay = non_pao_yakuman_val * 16000;
+                                                let ko_pay = non_pao_yakuman_val * 8000;
+                                                for i in 0..np as u8 {
+                                                    if i != pid {
+                                                        if i == self.oya {
+                                                            deltas[i as usize] -= oya_pay;
+                                                            total_win += oya_pay;
+                                                        } else {
+                                                            deltas[i as usize] -= ko_pay;
+                                                            total_win += ko_pay;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Tenhou: PAO pays ALL yakuman (full amount)
+                                        let full_amt = total_yakuman_val * unit + honba_total;
+                                        deltas[pp as usize] -= full_amt;
+                                        total_win += full_amt;
+                                    }
+                                }
+                            } else {
+                                // Standard Scoring
+                                if pid == self.oya {
+                                    for i in 0..np as u8 {
+                                        if i != pid {
+                                            deltas[i as usize] = -(res.tsumo_agari_ko as i32);
+                                            total_win += res.tsumo_agari_ko as i32;
+                                        }
+                                    }
+                                } else {
+                                    for i in 0..np as u8 {
+                                        if i != pid {
+                                            if i == self.oya {
+                                                deltas[i as usize] = -(res.tsumo_agari_oya as i32);
+                                                total_win += res.tsumo_agari_oya as i32;
+                                            } else {
+                                                deltas[i as usize] = -(res.tsumo_agari_ko as i32);
+                                                total_win += res.tsumo_agari_ko as i32;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            total_win += (self.riichi_sticks * 1000) as i32;
+                            self.riichi_sticks = 0;
+
+                            deltas[pid as usize] += total_win;
+
+                            self.players[pid as usize].score_delta = deltas[pid as usize]; // Actually we need to set for all
+                            for (i, p) in self.players.iter_mut().enumerate() {
+                                p.score += deltas[i];
+                                p.score_delta = deltas[i];
+                            }
+
+                            let mut val = res;
+                            for (&yid, &liable) in &self.players[pid as usize].pao {
+                                if val.yaku.contains(&(yid as u32)) {
+                                    val.pao_payer = Some(liable);
+                                    break;
+                                }
+                            }
+                            self.win_results.insert(pid, val);
+
+                            if !self.skip_mjai_logging {
+                                let mut ev = serde_json::Map::new();
+                                ev.insert("type".to_string(), Value::String("hora".to_string()));
+                                ev.insert("actor".to_string(), Value::Number(pid.into()));
+                                ev.insert("target".to_string(), Value::Number(pid.into()));
+                                ev.insert(
+                                    "deltas".to_string(),
+                                    serde_json::to_value(deltas).expect("valid JSON"),
+                                );
+                                ev.insert("tsumo".to_string(), Value::Bool(true));
+
+                                let mut ura_markers = Vec::new();
+                                if self.players[pid as usize].riichi_declared {
+                                    ura_markers = self._get_ura_markers();
+                                }
+                                ev.insert(
+                                    "ura_markers".to_string(),
+                                    serde_json::to_value(&ura_markers).expect("valid JSON"),
+                                );
+
+                                self._push_mjai_event(Value::Object(ev));
+                            }
+
+                            self._initialize_next_round(pid == self.oya, false);
+                        } else {
+                            self.current_player = (self.current_player + 1) % np as u8;
+                            self._deal_next();
+                        }
+                    }
+                    ActionType::Kita => {
+                        // Kita is only valid in 3P; handled by GameState3P
+                    }
+                    _ => {}
+                }
+            }
+        } else if self.phase == Phase::WaitResponse {
+            // Check Missed WinResult for all who could Ron but didn't
+            for (&pid, legals) in &self.current_claims {
+                if legals.iter().any(|a| a.action_type == ActionType::Ron) {
+                    let mut roned = false;
+                    if let Some(act) = actions.get(&pid)
+                        && act.action_type == ActionType::Ron
+                    {
+                        roned = true;
+                    }
+                    if !roned {
+                        self.players[pid as usize].missed_agari_doujun = true;
+                        if self.players[pid as usize].riichi_declared {
+                            self.players[pid as usize].missed_agari_riichi = true;
+                        }
+                    }
+                }
+            }
+
+            let mut ron_claims = Vec::new();
+            let mut call_claim: Option<(u8, Action)> = None;
+
+            for &pid in &self.active_players {
+                if let Some(act) = actions.get(&pid) {
+                    if act.action_type == ActionType::Ron {
+                        ron_claims.push(pid);
+                    } else if act.action_type == ActionType::Pon
+                        || act.action_type == ActionType::Daiminkan
+                        || act.action_type == ActionType::Chi
+                    {
+                        if let Some((_old_pid, old_act)) = &call_claim {
+                            let old_is_pon = old_act.action_type == ActionType::Pon
+                                || old_act.action_type == ActionType::Daiminkan;
+                            let new_is_pon = act.action_type == ActionType::Pon
+                                || act.action_type == ActionType::Daiminkan;
+                            if !old_is_pon && new_is_pon {
+                                call_claim = Some((pid, act.clone()));
+                            }
+                        } else {
+                            call_claim = Some((pid, act.clone()));
+                        }
+                    }
+                }
+            }
+
+            // Retire this response's offers after recording missed wins and
+            // selecting claims, before a call can open a new response window.
+            self.current_claims.clear();
+
+            if !ron_claims.is_empty() {
+                // Sanchaho: all non-discarders ron → abortive draw
+                if ron_claims.len() >= NP - 1 && self.rule.sanchaho_is_draw {
+                    self._trigger_ryukyoku("sanchaho");
+                    return;
+                }
+
+                let (target_pid, win_tile) = self.last_discard.unwrap_or((self.current_player, 0));
+
+                ron_claims.sort_by_key(|&pid| (pid + np as u8 - target_pid) % np as u8);
+
+                let winners = ron_claims;
+
+                let mut total_deltas = [0i32; NP];
+                let mut oya_won = false;
+                let mut deposit_taken = false;
+                let mut honba_taken = false;
+
+                for &w_pid in &winners {
+                    let hand = &self.players[w_pid as usize].hand;
+                    let melds = &self.players[w_pid as usize].melds;
+                    let p_wind = (w_pid + np as u8 - self.oya) % np as u8;
+                    let is_chankan = self.pending_kan.is_some();
+
+                    // Only the first winner (closest to discarder) gets honba
+                    let ron_honba = if !honba_taken {
+                        honba_taken = true;
+                        self.honba as u32
+                    } else {
+                        0
+                    };
+
+                    let cond = Conditions {
+                        tsumo: false,
+                        riichi: self.players[w_pid as usize].riichi_declared,
+                        double_riichi: self.players[w_pid as usize].double_riichi_declared,
+                        ippatsu: self.players[w_pid as usize].ippatsu_cycle,
+                        haitei: false,
+                        houtei: self.wall.drawable_count == 0 && !self.is_rinshan_flag,
+                        rinshan: false,
+                        chankan: is_chankan,
+                        tsumo_first_turn: false,
+                        player_wind: Wind::from(p_wind),
+                        round_wind: Wind::from(self.round_wind),
+                        riichi_sticks: self.riichi_sticks,
+                        honba: ron_honba,
+                        ..Default::default()
+                    };
+
+                    let calc =
+                        crate::hand_evaluator::HandEvaluator::new(hand.clone(), melds.clone());
+                    let ura_indicators = if self.players[w_pid as usize].riichi_declared {
+                        self._get_ura_indicators()
+                    } else {
+                        vec![]
+                    };
+                    let mut res = calc.calc(
+                        win_tile,
+                        self.wall.dora_indicators.clone(),
+                        ura_indicators,
+                        Some(cond),
+                    );
+
+                    // Cap double yakuman patterns when not enabled per rule flags
+                    if res.yakuman && res.han > 13 {
+                        let mut cap = 0u32;
+                        for &y in &res.yaku {
+                            match y {
+                                47 if !self.rule.is_junsei_chuurenpoutou_double => cap += 13,
+                                48 if !self.rule.is_suuankou_tanki_double => cap += 13,
+                                49 if !self.rule.is_kokushi_musou_13machi_double => cap += 13,
+                                50 if !self.rule.is_daisuushii_double => cap += 13,
+                                _ => {}
+                            }
+                        }
+                        if cap > 0 {
+                            res.han = res.han.saturating_sub(cap).max(13);
+                            let capped = crate::score::calculate_score(
+                                res.han as u8,
+                                0,
+                                w_pid == self.oya,
+                                false,
+                                ron_honba,
+                                np as u8,
+                            );
+                            res.ron_agari = capped.pay_ron;
+                            res.tsumo_agari_oya = capped.pay_tsumo_oya;
+                            res.tsumo_agari_ko = capped.pay_tsumo_ko;
+                        }
+                    }
+
+                    if res.is_win {
+                        let score = res.ron_agari as i32;
+
+                        let mut pao_payer = target_pid;
+                        let mut pao_amt = 0i32;
+
+                        if res.yakuman {
+                            let mut has_pao = false;
+                            let mut total_yakuman_val = 0i32;
+                            let mut pao_yakuman_val = 0i32;
+
+                            for &yid in &res.yaku {
+                                let val: i32 = match yid {
+                                    47 if self.rule.is_junsei_chuurenpoutou_double => 2,
+                                    48 if self.rule.is_suuankou_tanki_double => 2,
+                                    49 if self.rule.is_kokushi_musou_13machi_double => 2,
+                                    50 if self.rule.is_daisuushii_double => 2,
+                                    _ => 1,
+                                };
+                                total_yakuman_val += val;
+                                if let Some(liable) =
+                                    self.players[w_pid as usize].pao.get(&(yid as u8))
+                                {
+                                    has_pao = true;
+                                    pao_payer = *liable;
+                                    pao_yakuman_val += val;
+                                }
+                            }
+
+                            if has_pao {
+                                let is_oya = w_pid == self.oya;
+                                let unit: i32 = if is_oya { 48000 } else { 32000 };
+                                let honba_ron = ron_honba as i32 * (np as i32 - 1) * 100;
+
+                                // Ron with PAO: split between PAO player and deal-in player.
+                                // yakuman_pao_is_liability_only controls the split base:
+                                //   true  (MjSoul): only PAO-triggering yakuman portion split 50/50
+                                //   false (Tenhou): total yakuman split 50/50
+                                let split_base = if self.rule.yakuman_pao_is_liability_only {
+                                    pao_yakuman_val * unit
+                                } else {
+                                    total_yakuman_val * unit
+                                };
+                                pao_amt = split_base / 2 + honba_ron;
+                            }
+                        }
+
+                        let mut this_deltas = vec![0i32; np];
+                        this_deltas[w_pid as usize] += score;
+                        this_deltas[pao_payer as usize] -= pao_amt;
+                        this_deltas[target_pid as usize] -= score - pao_amt;
+
+                        total_deltas[w_pid as usize] += score;
+                        total_deltas[pao_payer as usize] -= pao_amt;
+                        total_deltas[target_pid as usize] -= score - pao_amt;
+
+                        if !deposit_taken {
+                            let stick_pts = (self.riichi_sticks * 1000) as i32;
+                            total_deltas[w_pid as usize] += stick_pts;
+                            this_deltas[w_pid as usize] += stick_pts;
+                            self.riichi_sticks = 0;
+                            deposit_taken = true;
+                        }
+
+                        let mut val = res;
+                        for (&yid, &liable) in &self.players[w_pid as usize].pao {
+                            if val.yaku.contains(&(yid as u32)) {
+                                val.pao_payer = Some(liable);
+                                break;
+                            }
+                        }
+                        self.win_results.insert(w_pid, val);
+
+                        if w_pid == self.oya {
+                            oya_won = true;
+                        }
+
+                        if !self.skip_mjai_logging {
+                            let mut ev = serde_json::Map::new();
+                            ev.insert("type".to_string(), Value::String("hora".to_string()));
+                            ev.insert("actor".to_string(), Value::Number(w_pid.into()));
+                            ev.insert("target".to_string(), Value::Number(target_pid.into()));
+                            ev.insert(
+                                "deltas".to_string(),
+                                serde_json::to_value(this_deltas).expect("valid JSON"),
+                            );
+
+                            let mut ura_markers = Vec::new();
+                            if self.players[w_pid as usize].riichi_declared {
+                                ura_markers = self._get_ura_markers();
+                            }
+                            ev.insert(
+                                "ura_markers".to_string(),
+                                serde_json::to_value(&ura_markers).expect("valid JSON"),
+                            );
+
+                            self._push_mjai_event(Value::Object(ev));
+                        }
+                    }
+                }
+
+                for (i, p) in self.players.iter_mut().enumerate() {
+                    p.score += total_deltas[i];
+                    p.score_delta = total_deltas[i];
+                }
+
+                self._initialize_next_round(oya_won, false);
+            } else if let Some((claimer, action)) = call_claim {
+                self._accept_riichi();
+                self.is_rinshan_flag = false;
+                self.is_first_turn = false;
+
+                // Discard was called → discarder loses nagashi eligibility
+                if let Some((discarder_pid, _)) = self.last_discard {
+                    self.players[discarder_pid as usize].nagashi_eligible = false;
+                }
+
+                for p in 0..np {
+                    self.players[p].ippatsu_cycle = false;
+                }
+
+                if action.action_type == ActionType::Daiminkan {
+                    self.current_player = claimer;
+                    self.active_players = vec![claimer];
+                    self.players[claimer as usize].forbidden_discards.clear();
+                    // Handled exclusively by _resolve_kan
+                    self._resolve_kan(claimer, action.clone());
+                    return; // Skip the rest of claim handling (Pon/Chi)
+                }
+
+                for &t in &action.consume_tiles {
+                    if let Some(idx) = self.players[claimer as usize]
+                        .hand
+                        .iter()
+                        .position(|&x| x == t)
+                    {
+                        self.players[claimer as usize].hand.remove(idx);
+                    }
+                }
+                let (discarder, tile) = self.last_discard.expect("last_discard must be set");
+                let mut tiles = action.consume_tiles.clone();
+                tiles.push(tile);
+                tiles.sort();
+                let meld_type = match action.action_type {
+                    ActionType::Pon => MeldType::Pon,
+                    ActionType::Chi => MeldType::Chi,
+                    _ => MeldType::Chi, // Should not happen for this block anymore
+                };
+                self.players[claimer as usize].melds.push(Meld {
+                    meld_type,
+                    tiles: tiles.clone(),
+                    opened: true,
+                    from_who: discarder as i8,
+                    called_tile: Some(tile),
+                });
+
+                if !self.skip_mjai_logging {
+                    let type_str = match action.action_type {
+                        ActionType::Pon => Some("pon"),
+                        ActionType::Chi => Some("chi"),
+                        ActionType::Daiminkan => Some("daiminkan"),
+                        _ => None,
+                    };
+                    if let Some(s) = type_str {
+                        let mut ev = serde_json::Map::new();
+                        ev.insert("type".to_string(), serde_json::Value::String(s.to_string()));
+                        ev.insert(
+                            "actor".to_string(),
+                            serde_json::Value::Number(claimer.into()),
+                        );
+                        ev.insert(
+                            "target".to_string(),
+                            serde_json::Value::Number(discarder.into()),
+                        );
+                        ev.insert(
+                            "pai".to_string(),
+                            serde_json::Value::String(tid_to_mjai(tile)),
+                        );
+                        let cons_strs: Vec<String> = action
+                            .consume_tiles
+                            .iter()
+                            .map(|&t| tid_to_mjai(t))
+                            .collect();
+                        ev.insert(
+                            "consumed".to_string(),
+                            serde_json::to_value(cons_strs).expect("valid JSON"),
+                        );
+                        self._push_mjai_event(serde_json::Value::Object(ev));
+                    }
+                }
+
+                // PAO implementation
+                if meld_type == MeldType::Pon
+                    || meld_type == MeldType::Daiminkan
+                    || meld_type == MeldType::Kakan
+                {
+                    self.register_call_pao(claimer as usize, tile, discarder);
+                }
+
+                self.current_player = claimer;
+                self.phase = Phase::WaitAct;
+                self.active_players = vec![claimer];
+                self.players[claimer as usize].forbidden_discards.clear();
+
+                if action.action_type == ActionType::Pon {
+                    self.players[claimer as usize].forbidden_discards.push(tile);
+                } else if action.action_type == ActionType::Chi {
+                    self.players[claimer as usize].forbidden_discards.push(tile);
+                    let t34 = tile / 4;
+                    let mut consumed_34: Vec<u8> =
+                        action.consume_tiles.iter().map(|&x| x / 4).collect();
+                    consumed_34.sort();
+                    if consumed_34[0] == t34 + 1 && consumed_34[1] == t34 + 2 {
+                        if t34 % 9 <= 5 {
+                            self.players[claimer as usize]
+                                .forbidden_discards
+                                .push((t34 + 3) * 4);
+                        }
+                    } else if t34 >= 2
+                        && consumed_34[1] == t34 - 1
+                        && consumed_34[0] == t34 - 2
+                        && t34 % 9 >= 3
+                    {
+                        self.players[claimer as usize]
+                            .forbidden_discards
+                            .push((t34 - 3) * 4);
+                    }
+                }
+
+                if action.action_type == ActionType::Daiminkan {
+                    self._resolve_kan(claimer, action.clone());
+                } else {
+                    self.needs_tsumo = false;
+                    self.drawn_tile = None;
+                }
+            } else {
+                // All Pass
+                self.active_players.clear();
+
+                if let Some((pk_pid, pk_act)) = self.pending_kan.take() {
+                    self._resolve_kan(pk_pid, pk_act);
+                } else {
+                    self._accept_riichi();
+                    if self.check_abortive_draw() {
+                        return;
+                    }
+                    self.turn_count += 1;
+                    self.current_player = (self.current_player + 1) % np as u8;
+                    self._deal_next();
+                    if self.turn_count >= np as u32 {
+                        self.is_first_turn = false;
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_forced_tedashi(&self, pid: u8) -> bool {
+        self.rule.dealer_first_discard_is_tedashi
+            && pid == self.oya
+            && self.is_first_turn
+            && self.players[pid as usize].discards.is_empty()
+    }
+
+    fn _resolve_discard(&mut self, pid: u8, tile: u8, tsumogiri: bool) {
+        let tsumogiri = tsumogiri && !self.is_forced_tedashi(pid);
+        // After a discard the rinshan context is over. Clearing here ensures
+        // that houtei (last-discard win) is correctly detected even when the
+        // discard comes after a kan draw.
+        self.is_rinshan_flag = false;
+
+        // Clear ippatsu for the discarding player. When a riichi player discards
+        // without tsumo winning, their ippatsu window is over. Note: the riichi
+        // declaration discard won't wrongly clear it because _accept_riichi() runs
+        // AFTER this and sets ippatsu_cycle = true.
+        self.players[pid as usize].ippatsu_cycle = false;
+        self.players[pid as usize].discards.push(tile);
+        self.last_discard = Some((pid, tile));
+        self.drawn_tile = None;
+        self.players[pid as usize]
+            .discard_from_hand
+            .push(!tsumogiri);
+        let riichi_stage = self.players[pid as usize].riichi_stage;
+        self.players[pid as usize]
+            .discard_is_riichi
+            .push(riichi_stage);
+
+        // Track last tedashi (hand discard, not tsumogiri)
+        if !tsumogiri {
+            self.last_tedashis[pid as usize] = Some(tile);
+        }
+
+        self.needs_tsumo = true;
+
+        if self.players[pid as usize].riichi_stage {
+            self.riichi_sutehais[pid as usize] = Some(tile);
+            self.players[pid as usize].riichi_declared = true;
+            if self.is_first_turn {
+                self.players[pid as usize].double_riichi_declared = true;
+            }
+            self.players[pid as usize].riichi_declaration_index =
+                Some(self.players[pid as usize].discards.len() - 1);
+            self.players[pid as usize].riichi_stage = false;
+            self.riichi_pending_acceptance = Some(pid);
+        }
+
+        // Reveal pending kan doras before dahai event
+        while self.wall.pending_kan_dora_count > 0 {
+            self.wall.pending_kan_dora_count -= 1;
+            self._reveal_kan_dora();
+        }
+
+        if !self.skip_mjai_logging {
+            let mut ev = serde_json::Map::new();
+            ev.insert("type".to_string(), Value::String("dahai".to_string()));
+            ev.insert("actor".to_string(), Value::Number(pid.into()));
+            ev.insert("pai".to_string(), Value::String(tid_to_mjai(tile)));
+            ev.insert("tsumogiri".to_string(), Value::Bool(tsumogiri));
+            self._push_mjai_event(Value::Object(ev));
+        }
+
+        // A player's own discard ends temporary furiten, including after a call.
+        // Other players' calls and discards must not clear this player's furiten.
+        if !self.policy_temp_furiten_own_draw {
+            self.players[pid as usize].missed_agari_doujun = false;
+        }
+        self.players[pid as usize].nagashi_eligible &= crate::types::is_terminal_tile(tile);
+
+        self.current_claims.clear();
+        self.active_players.clear();
+        let mut has_claims = false;
+        let mut claim_active = Vec::new();
+
+        // Loop players for claim actions
+        let np = NP;
+        for i in 0..np as u8 {
+            if i == pid {
+                continue;
+            }
+            let (legals, missed_agari) = self._get_claim_actions_for_player(i, pid, tile);
+            if missed_agari {
+                self.players[i as usize].missed_agari_doujun = true;
+            }
+            if !legals.is_empty() {
+                has_claims = true;
+                claim_active.push(i);
+                self.current_claims.insert(i, legals);
+            }
+        }
+
+        if has_claims {
+            self.phase = Phase::WaitResponse;
+            self.active_players = claim_active;
+        } else {
+            if let Some(_rp) = self.riichi_pending_acceptance {
+                self._accept_riichi();
+            }
+            if !self.check_abortive_draw() {
+                self.turn_count += 1;
+                self.current_player = (pid + 1) % np as u8;
+                self._deal_next();
+                if self.turn_count >= np as u32 {
+                    self.is_first_turn = false;
+                }
+            }
+        }
+    }
+
+    // Shared by online resolution, log replay and direct MJAI calls. Concealed
+    // honor kans count as prior melds; only a successful open call triggers pao.
+    fn register_call_pao(&mut self, actor: usize, tile: u8, discarder: u8) {
+        let value = tile / 4;
+        let (range, required, yaku) = if (31..=33).contains(&value) {
+            (31..=33, 3, 37)
+        } else if (27..=30).contains(&value) {
+            (27..=30, 4, 50)
+        } else {
+            return;
+        };
+        let count = self.players[actor]
+            .melds
+            .iter()
+            .filter(|m| m.meld_type != MeldType::Chi && range.contains(&(m.tiles[0] / 4)))
+            .count();
+        if count == required {
+            self.players[actor].pao.insert(yaku, discarder);
+        }
+    }
+
+    pub fn _resolve_kan(&mut self, pid: u8, action: Action) {
+        let p_idx = pid as usize;
+        if action.action_type == ActionType::Kakan {
+            // Hand and melds were already updated in step() to keep observations in sync
+        } else {
+            // Ankan / Daiminkan
+            for &t in &action.consume_tiles {
+                if let Some(idx) = self.players[p_idx].hand.iter().position(|&x| x == t) {
+                    self.players[p_idx].hand.remove(idx);
+                }
+            }
+            let (m_type, tiles, from_who, ct) = if action.action_type == ActionType::Ankan {
+                (MeldType::Ankan, action.consume_tiles.clone(), -1i8, None)
+            } else {
+                let (discarder, tile) = self.last_discard.expect("last_discard must be set");
+                let mut t_vec = action.consume_tiles.clone();
+                t_vec.push(tile);
+                t_vec.sort();
+                (MeldType::Daiminkan, t_vec, discarder as i8, Some(tile))
+            };
+            self.players[p_idx].melds.push(Meld {
+                meld_type: m_type,
+                tiles,
+                opened: m_type == MeldType::Daiminkan,
+                from_who,
+                called_tile: ct,
+            });
+
+            // PAO check for Daiminkan
+            if action.action_type == ActionType::Daiminkan {
+                let (discarder, tile) = self.last_discard.expect("last_discard must be set");
+                self.register_call_pao(p_idx, tile, discarder);
+            }
+        }
+
+        self.is_first_turn = false;
+        for p in &mut self.players {
+            p.ippatsu_cycle = false;
+        }
+
+        if self.wall.drawable_count > 0 {
+            // Rinshan tiles are at the beginning of the wall vector (0-3)
+            let t = self.wall.tiles.remove(0);
+            self.wall.drawable_count -= 1;
+            self.players[p_idx].hand.push(t);
+            if self.policy_temp_furiten_own_draw {
+                self.players[p_idx].missed_agari_doujun = false;
+            }
+            self.drawn_tile = Some(t);
+            self.wall.rinshan_draw_count += 1;
+            self.is_rinshan_flag = true;
+
+            if !self.skip_mjai_logging {
+                let m_type = match action.action_type {
+                    ActionType::Ankan => Some("ankan"),
+                    ActionType::Daiminkan => Some("daiminkan"),
+                    ActionType::Kakan => None, // Logged in step()
+                    _ => None,
+                };
+                if let Some(s) = m_type {
+                    let mut ev = serde_json::Map::new();
+                    ev.insert("type".to_string(), Value::String(s.to_string()));
+                    ev.insert("actor".to_string(), Value::Number(pid.into()));
+                    if action.action_type == ActionType::Ankan {
+                        let tile = action.tile.unwrap_or_else(|| action.consume_tiles[0]);
+                        ev.insert("pai".to_string(), Value::String(tid_to_mjai(tile)));
+                    } else if action.action_type == ActionType::Daiminkan
+                        && let Some((target, tile)) = self.last_discard
+                    {
+                        ev.insert("target".to_string(), Value::Number(target.into()));
+                        ev.insert("pai".to_string(), Value::String(tid_to_mjai(tile)));
+                    }
+                    let cons_strs: Vec<String> = action
+                        .consume_tiles
+                        .iter()
+                        .map(|&t| tid_to_mjai(t))
+                        .collect();
+                    ev.insert(
+                        "consumed".to_string(),
+                        serde_json::to_value(cons_strs).expect("valid JSON"),
+                    );
+                    self._push_mjai_event(Value::Object(ev));
+                }
+            }
+
+            // Reveal any pending doras from previous kans
+            while self.wall.pending_kan_dora_count > 0 {
+                self.wall.pending_kan_dora_count -= 1;
+                self._reveal_kan_dora();
+            }
+
+            // Ankan: always reveal dora immediately (before rinshan tsumo)
+            // Daiminkan/Kakan: defer dora reveal until discard (dora event before dahai)
+            if action.action_type == ActionType::Ankan {
+                self._reveal_kan_dora();
+            } else {
+                self.wall.pending_kan_dora_count += 1;
+            }
+
+            if !self.skip_mjai_logging {
+                // Rinshan tsumo logging should apply to Kakan as well
+                let mut t_ev = serde_json::Map::new();
+                t_ev.insert("type".to_string(), Value::String("tsumo".to_string()));
+                t_ev.insert("actor".to_string(), Value::Number(pid.into()));
+                t_ev.insert("pai".to_string(), Value::String(tid_to_mjai(t)));
+                self._push_mjai_event(Value::Object(t_ev));
+            }
+            self.phase = Phase::WaitAct;
+            self.active_players = vec![pid];
+        }
+    }
+
+    fn _accept_riichi(&mut self) {
+        if let Some(p) = self.riichi_pending_acceptance {
+            self.players[p as usize].score -= 1000;
+            self.players[p as usize].score_delta -= 1000;
+            self.riichi_sticks += 1;
+            self.players[p as usize].riichi_declared = true;
+            self.players[p as usize].ippatsu_cycle = true;
+            if !self.skip_mjai_logging {
+                let mut ev = serde_json::Map::new();
+                ev.insert(
+                    "type".to_string(),
+                    Value::String("reach_accepted".to_string()),
+                );
+                ev.insert("actor".to_string(), Value::Number(p.into()));
+                self._push_mjai_event(Value::Object(ev));
+            }
+            self.riichi_pending_acceptance = None;
+        }
+    }
+
+    pub fn _deal_next(&mut self) {
+        self.is_rinshan_flag = false;
+        if self.wall.drawable_count == 0 {
+            self._trigger_ryukyoku("exhaustive_draw");
+            return;
+        }
+        if let Some(t) = self.wall.tiles.pop() {
+            self.wall.drawable_count -= 1;
+            let pid = self.current_player;
+            self.players[pid as usize].hand.push(t);
+            if self.policy_temp_furiten_own_draw {
+                self.players[pid as usize].missed_agari_doujun = false;
+            }
+            self.drawn_tile = Some(t);
+            self.needs_tsumo = false;
+            self.phase = Phase::WaitAct;
+            self.active_players = vec![pid];
+
+            if !self.skip_mjai_logging {
+                let mut ev = serde_json::Map::new();
+                ev.insert("type".to_string(), Value::String("tsumo".to_string()));
+                ev.insert("actor".to_string(), Value::Number(pid.into()));
+                ev.insert("pai".to_string(), Value::String(tid_to_mjai(t)));
+                self._push_mjai_event(Value::Object(ev));
+            }
+            self.players[pid as usize].forbidden_discards.clear();
+        }
+    }
+
+    pub fn _initialize_next_round(&mut self, is_renchan: bool, is_draw: bool) {
+        self._advance_round(is_renchan, is_draw, false);
+    }
+
+    fn _advance_round(&mut self, is_renchan: bool, is_draw: bool, is_abortive_draw: bool) {
+        if self.is_done {
+            return;
+        }
+
+        if self.policy_external_rounds {
+            self.needs_initialize_next_round = true;
+            self.pending_oya_won = is_renchan;
+            self.pending_is_draw = is_draw;
+            self.active_players.clear();
+            if !self.skip_mjai_logging {
+                self._push_mjai_event(serde_json::json!({"type": "end_kyoku"}));
+            }
+            return;
+        }
+
+        let np: u8 = NP as u8;
+
+        // Tobi (bankruptcy) check: game ends if any player has negative score
+        if self.players.iter().any(|p| p.score < 0) {
+            self._process_end_game();
+            return;
+        }
+
+        let dealer_score = self.players[self.oya as usize].score;
+        let dealer_is_top = self.players.iter().enumerate().all(|(seat, player)| {
+            seat == self.oya as usize
+                || dealer_score > player.score
+                || (dealer_score == player.score && self.oya as usize <= seat)
+        });
+        let is_all_last_or_later = match self.game_mode {
+            1 | 4 => self.round_wind > 0 || self.oya == np - 1,
+            2 | 5 => self.round_wind > 1 || (self.round_wind == 1 && self.oya == np - 1),
+            _ => false,
+        };
+        // Abortive draws repeat without applying agari-yame or tenpai-yame.
+        if !is_abortive_draw
+            && is_renchan
+            && is_all_last_or_later
+            && dealer_is_top
+            && dealer_score >= 30000
+        {
+            self._process_end_game();
+            return;
+        }
+
+        let mut next_honba = self.honba;
+        let mut next_oya = self.oya;
+        let mut next_round_wind = self.round_wind;
+
+        if is_renchan {
+            next_honba = next_honba.saturating_add(1);
+        } else if is_draw {
+            next_honba = next_honba.saturating_add(1);
+            next_oya = (next_oya + 1) % np;
+            if next_oya == 0 {
+                next_round_wind += 1;
+            }
+        } else {
+            next_honba = 0;
+            next_oya = (next_oya + 1) % np;
+            if next_oya == 0 {
+                next_round_wind += 1;
+            }
+        }
+
+        match self.game_mode {
+            1 | 4 => {
+                // TODO: Delete 4, 5, 3
+                let max_score = self.players.iter().map(|p| p.score).max().unwrap_or(0);
+                if !is_abortive_draw
+                    && !is_renchan
+                    && next_round_wind >= 1
+                    && (max_score >= 30000 || next_round_wind > 1)
+                {
+                    self._process_end_game();
+                    return;
+                }
+            }
+            2 | 5 => {
+                let max_score = self.players.iter().map(|p| p.score).max().unwrap_or(0);
+                if !is_abortive_draw
+                    && !is_renchan
+                    && next_round_wind >= 2
+                    && (max_score >= 30000 || next_round_wind > 2)
+                {
+                    self._process_end_game();
+                    return;
+                }
+            }
+            0 | 3 => {
+                self._process_end_game();
+                return;
+            }
+            _ => {
+                if next_round_wind >= 1 {
+                    self._process_end_game();
+                    return;
+                }
+            }
+        }
+
+        if !self.skip_mjai_logging {
+            let mut ev = serde_json::Map::new();
+            ev.insert("type".to_string(), Value::String("end_kyoku".to_string()));
+            self._push_mjai_event(Value::Object(ev));
+        }
+
+        let next_scores: Vec<i32> = self.players.iter().map(|p| p.score).collect();
+        let next_sticks = self.riichi_sticks;
+        self._initialize_round(
+            next_oya,
+            next_round_wind,
+            next_honba,
+            next_sticks,
+            None,
+            Some(next_scores),
+        );
+    }
+
+    /// Initialize (or re-initialize) a single round.
+    ///
+    /// Used both at the start of a new game and when advancing to the next
+    /// round within a game.  When `scores` is `None`, player scores are
+    /// carried over from the previous round (normal round progression).
+    pub fn _initialize_round(
+        &mut self,
+        oya: u8,
+        round_wind: u8,
+        honba: u8,
+        kyotaku: u32,
+        wall: Option<Vec<u8>>,
+        scores: Option<Vec<i32>>,
+    ) {
+        let np = NP;
+        self.oya = oya;
+        self.kyoku_idx = oya;
+        self.current_player = oya;
+        self.honba = honba;
+        self.riichi_sticks = kyotaku;
+        self.round_wind = round_wind;
+
+        for p in &mut self.players {
+            p.reset_round();
+        }
+        self.is_done = false;
+        self.current_claims = HashMap::new();
+        self.pending_kan = None;
+        self.is_rinshan_flag = false;
+        self.wall.rinshan_draw_count = 0;
+        self.wall.pending_kan_dora_count = 0;
+        self.is_first_turn = true;
+        self.riichi_pending_acceptance = None;
+        self.turn_count = 0;
+        self.needs_tsumo = true;
+        self.needs_initialize_next_round = false;
+        self.pending_oya_won = false;
+        self.pending_is_draw = false;
+        self.last_discard = None;
+        self.win_results.clear();
+        self.last_win_results.clear();
+        self.round_end_scores = None;
+        self.riichi_sutehais = [None; NP];
+        self.last_tedashis = [None; NP];
+
+        if let Some(s) = scores {
+            for (i, &sc) in s.iter().enumerate() {
+                if i < self.players.len() {
+                    self.players[i].score = sc;
+                }
+            }
+        }
+
+        if let Some(w) = wall {
+            self.wall.load_wall(w);
+        } else {
+            self.wall.shuffle();
+        }
+
+        // Deal logic
+        for _ in 0..3 {
+            for idx in 0..np {
+                let p = (idx + oya as usize) % np;
+                for _ in 0..4 {
+                    if let Some(t) = self.wall.tiles.pop() {
+                        self.players[p].hand.push(t);
+                    }
+                }
+            }
+        }
+        for idx in 0..np {
+            let p = (idx + oya as usize) % np;
+            if let Some(t) = self.wall.tiles.pop() {
+                self.players[p].hand.push(t);
+            }
+        }
+        for p in &mut self.players {
+            p.hand.sort();
+        }
+
+        // 14 = dead wall tiles (2 rinshan stacks + 5 dora stacks)
+        self.wall.drawable_count = (self.wall.tiles.len() as u8) - 14;
+
+        // Record kyoku start offsets so get_observation() can return
+        // the full round history (not just incremental deltas).
+        for i in 0..NP {
+            self.kyoku_start_event_counts[i] = self.mjai_log_per_player[i].len();
+        }
+        // Reset pre-computed progression cache for the new round.
+        #[cfg(feature = "python")]
+        {
+            Arc::make_mut(&mut self.round_seq_progression).clear();
+            self.round_seq_prog_pending_reach = None;
+        }
+
+        if !self.skip_mjai_logging {
+            let wind_str = match round_wind % 4 {
+                0 => "E",
+                1 => "S",
+                2 => "W",
+                _ => "N",
+            };
+            let mut ev = serde_json::Map::new();
+            ev.insert("type".to_string(), Value::String("start_kyoku".to_string()));
+            ev.insert("bakaze".to_string(), Value::String(wind_str.to_string()));
+            ev.insert("kyoku".to_string(), Value::Number((oya + 1).into()));
+            ev.insert("honba".to_string(), Value::Number(honba.into()));
+            ev.insert("kyotaku".to_string(), Value::Number(kyotaku.into()));
+            ev.insert("oya".to_string(), Value::Number(oya.into()));
+            let scores_vec: Vec<i32> = self.players.iter().map(|p| p.score).collect();
+            ev.insert(
+                "scores".to_string(),
+                serde_json::to_value(scores_vec).expect("valid JSON"),
+            );
+            ev.insert(
+                "dora_marker".to_string(),
+                Value::String(tid_to_mjai(self.wall.dora_indicators[0])),
+            );
+
+            let mut tehais = Vec::new();
+            for p in &self.players {
+                let hand_strs: Vec<String> = p.hand.iter().map(|&t| tid_to_mjai(t)).collect();
+                tehais.push(hand_strs);
+            }
+            ev.insert(
+                "tehais".to_string(),
+                serde_json::to_value(tehais).expect("valid JSON"),
+            );
+
+            self._push_mjai_event(Value::Object(ev));
+        }
+
+        self.current_player = self.oya;
+        self.phase = Phase::WaitAct;
+        self.active_players = vec![self.oya];
+
+        // Draw 14th tile for Oya
+        if let Some(t) = self.wall.tiles.pop() {
+            self.wall.drawable_count -= 1;
+            self.players[self.oya as usize].hand.push(t);
+            self.drawn_tile = Some(t);
+            self.needs_tsumo = false;
+
+            if !self.skip_mjai_logging {
+                let mut ev = serde_json::Map::new();
+                ev.insert("type".to_string(), Value::String("tsumo".to_string()));
+                ev.insert("actor".to_string(), Value::Number(self.oya.into()));
+                ev.insert("pai".to_string(), Value::String(tid_to_mjai(t)));
+                self._push_mjai_event(Value::Object(ev));
+            }
+        } else {
+            self.needs_tsumo = true;
+            self.drawn_tile = None;
+        }
+    }
+
+    pub fn _trigger_ryukyoku(&mut self, reason: &str) {
+        if reason == "sanchaho" {
+            // Ron on the declaration discard prevents the riichi deposit,
+            // including when three ron claims end in an abortive draw.
+            self.riichi_pending_acceptance = None;
+        } else {
+            self._accept_riichi();
+        }
+
+        let np = NP;
+        let mut tenpai = vec![false; np];
+        let mut final_reason = reason.to_string();
+        let mut nagashi_winners = Vec::new();
+
+        if reason == "exhaustive_draw" {
+            for (i, p) in self.players.iter().enumerate() {
+                let calc =
+                    crate::hand_evaluator::HandEvaluator::new(p.hand.clone(), p.melds.clone());
+                if calc.is_tenpai() {
+                    tenpai[i] = true;
+                }
+            }
+            for (i, p) in self.players.iter().enumerate() {
+                if p.nagashi_eligible {
+                    nagashi_winners.push(i as u8);
+                }
+            }
+
+            if !nagashi_winners.is_empty() {
+                final_reason = "nagashimangan".to_string();
+                // Apply mangan tsumo payment for each nagashi winner (no honba)
+                for &w in &nagashi_winners {
+                    let is_oya = w == self.oya;
+                    let score_res = crate::score::calculate_score(5, 30, is_oya, true, 0, np as u8);
+                    if is_oya {
+                        for i in 0..np {
+                            if i as u8 != w {
+                                self.players[i].score -= score_res.pay_tsumo_ko as i32;
+                                self.players[i].score_delta -= score_res.pay_tsumo_ko as i32;
+                                self.players[w as usize].score += score_res.pay_tsumo_ko as i32;
+                                self.players[w as usize].score_delta +=
+                                    score_res.pay_tsumo_ko as i32;
+                            }
+                        }
+                    } else {
+                        for i in 0..np {
+                            if i as u8 != w {
+                                let pay = if i as u8 == self.oya {
+                                    score_res.pay_tsumo_oya as i32
+                                } else {
+                                    score_res.pay_tsumo_ko as i32
+                                };
+                                self.players[i].score -= pay;
+                                self.players[i].score_delta -= pay;
+                                self.players[w as usize].score += pay;
+                                self.players[w as usize].score_delta += pay;
+                            }
+                        }
+                    }
+                }
+            } else {
+                let tenpai_pool = 3000;
+                let num_tp = tenpai.iter().filter(|&&t| t).count();
+                if num_tp > 0 && num_tp < np {
+                    let pk = tenpai_pool / num_tp as i32;
+                    let pn = tenpai_pool / (np - num_tp) as i32;
+                    for (i, tp) in tenpai.iter().enumerate() {
+                        let delta = if *tp { pk } else { -pn };
+                        self.players[i].score += delta;
+                        self.players[i].score_delta = delta;
+                    }
+                }
+            }
+        } else if let Some(stripped) = reason.strip_prefix("Error: Illegal Action by Player ")
+            && let Ok(pid) = stripped.parse::<usize>()
+            && pid < np
+        {
+            let is_offender_oya = (pid as u8) == self.oya;
+            if is_offender_oya {
+                let penalty = 4000 * (np as i32 - 1);
+                let each_get = penalty / (np as i32 - 1);
+                for i in 0..np {
+                    if i == pid {
+                        self.players[i].score -= penalty;
+                        self.players[i].score_delta = -penalty;
+                    } else {
+                        self.players[i].score += each_get;
+                        self.players[i].score_delta = each_get;
+                    }
+                }
+            } else {
+                let total_penalty = 4000 + 2000 * (np as i32 - 2);
+                for i in 0..np {
+                    if i == pid {
+                        self.players[i].score -= total_penalty;
+                        self.players[i].score_delta = -total_penalty;
+                    } else if (i as u8) == self.oya {
+                        self.players[i].score += 4000;
+                        self.players[i].score_delta = 4000;
+                    } else {
+                        self.players[i].score += 2000;
+                        self.players[i].score_delta = 2000;
+                    }
+                }
+            }
+        }
+
+        // Nagashi mangan replaces the payments, but renchan still depends on
+        // dealer tenpai as in any other exhaustive draw.
+        let is_renchan = if reason == "exhaustive_draw" {
+            tenpai[self.oya as usize]
+        } else {
+            true
+        };
+
+        if !self.skip_mjai_logging {
+            let mut ev = serde_json::Map::new();
+            ev.insert("type".to_string(), Value::String("ryukyoku".to_string()));
+            ev.insert("reason".to_string(), Value::String(final_reason.clone()));
+            // Riichi deposits were already recorded by reach_accepted.
+            // An abortive draw itself transfers no points.
+            let deltas: Vec<i32> = if matches!(
+                reason,
+                "kyushu_kyuhai" | "sufuurenta" | "suukansansen" | "suucha_riichi" | "sanchaho"
+            ) {
+                vec![0; NP]
+            } else {
+                self.players.iter().map(|p| p.score_delta).collect()
+            };
+            ev.insert(
+                "deltas".to_string(),
+                serde_json::to_value(deltas).expect("valid JSON"),
+            );
+            self._push_mjai_event(Value::Object(ev));
+        }
+
+        self._advance_round(is_renchan, true, reason != "exhaustive_draw");
+    }
+
+    fn check_abortive_draw(&mut self) -> bool {
+        if let Some(reason) = self.abortive_draw_reason() {
+            self._trigger_ryukyoku(reason);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn kan_counts(&self) -> [usize; NP] {
+        self.players.each_ref().map(|p| {
+            p.melds
+                .iter()
+                .filter(|m| {
+                    matches!(
+                        m.meld_type,
+                        MeldType::Daiminkan | MeldType::Ankan | MeldType::Kakan
+                    )
+                })
+                .count()
+        })
+    }
+
+    fn abortive_draw_reason(&self) -> Option<&'static str> {
+        self.abortive_draw_causes().into_iter().next()
+    }
+
+    /// Non-mutating predicates; source adapters choose their explicit priority.
+    pub fn abortive_draw_causes(&self) -> Vec<&'static str> {
+        let mut causes = Vec::new();
+        // 1. Sufuurenta (Four Winds)
+        let turns_ok = self.players.iter().all(|p| p.discards.len() == 1);
+        let melds_empty = self.players.iter().all(|p| p.melds.is_empty());
+
+        if turns_ok
+            && melds_empty
+            && let Some(first_tile) = self.players[0].discards.first()
+        {
+            let first = first_tile / 4;
+            if (27..=30).contains(&first)
+                && self
+                    .players
+                    .iter()
+                    .all(|p| p.discards.first().map(|&t| t / 4) == Some(first))
+            {
+                causes.push("sufuurenta");
+            }
+        }
+
+        // 2. Suukansansen (4 Kans)
+        let kan_counts = self.kan_counts();
+        if kan_counts.iter().sum::<usize>() >= 4
+            && kan_counts.iter().filter(|&&count| count > 0).count() > 1
+        {
+            causes.push("suukansansen");
+        }
+
+        // 3. Suucha Riichi (Four Riichis)
+        if self.players.iter().all(|p| p.riichi_declared) {
+            causes.push("suucha_riichi");
+        }
+
+        causes
+    }
+
+    /// Check the recorded nine-terminals request without constructing actions.
+    pub fn kyuushu_available(&self, actor: u8) -> bool {
+        let pid = actor as usize;
+        if pid >= NP
+            || self.current_player != actor
+            || self.phase != Phase::WaitAct
+            || !self.is_first_turn
+            || !self.players[pid].discards.is_empty()
+            || self.drawn_tile.is_none()
+            || self.players[pid].riichi_stage
+            || self.players.iter().any(|p| !p.melds.is_empty())
+        {
+            return false;
+        }
+        self.players[pid]
+            .hand
+            .iter()
+            .filter(|&&t| crate::types::is_terminal_tile(t))
+            .map(|&t| t / 4)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            >= 9
+    }
+
+    pub fn _reveal_kan_dora(&mut self) {
+        let count = self.wall.dora_indicators.len();
+        if count < 5 {
+            // Base indices for Omote Dora are 4, 6, 8, 10, 12 in the wall
+            // Since we use remove(0) for Rinshan draws, the indices shift down.
+            let base_idx = (4 + 2 * count).saturating_sub(self.wall.rinshan_draw_count as usize);
+            if base_idx < self.wall.tiles.len() {
+                self.wall.dora_indicators.push(self.wall.tiles[base_idx]);
+                if !self.skip_mjai_logging {
+                    let mut ev = serde_json::Map::new();
+                    ev.insert("type".to_string(), Value::String("dora".to_string()));
+                    ev.insert(
+                        "dora_marker".to_string(),
+                        Value::String(tid_to_mjai(
+                            self.wall
+                                .dora_indicators
+                                .last()
+                                .copied()
+                                .expect("dora_indicators must not be empty"),
+                        )),
+                    );
+                    self._push_mjai_event(Value::Object(ev));
+                }
+            }
+        }
+    }
+
+    fn _get_ura_indicators(&self) -> Vec<u8> {
+        let mut indicators = Vec::new();
+        for i in 0..self.wall.dora_indicators.len() {
+            let idx = (5 + 2 * i).saturating_sub(self.wall.rinshan_draw_count as usize);
+            if idx < self.wall.tiles.len() {
+                indicators.push(self.wall.tiles[idx]);
+            }
+        }
+        indicators
+    }
+
+    pub fn _get_ura_markers(&self) -> Vec<String> {
+        let mut markers = Vec::new();
+        for i in 0..self.wall.dora_indicators.len() {
+            let idx = (5 + 2 * i).saturating_sub(self.wall.rinshan_draw_count as usize); // Ura is next to front.
+            // Original: `self.wall[5 + 2*i]`
+            if idx < self.wall.tiles.len() {
+                markers.push(tid_to_mjai(self.wall.tiles[idx]));
+            }
+        }
+        markers
+    }
+
+    pub fn _process_end_game(&mut self) {
+        // Single-round mode exposes hand settlement, including any unclaimed
+        // pot. A completed match awards that pot to the top-ranked seat.
+        if !matches!(self.game_mode, 0 | 3) && self.riichi_sticks > 0 {
+            let top = self
+                .players
+                .iter()
+                .enumerate()
+                .max_by_key(|(seat, p)| (p.score, std::cmp::Reverse(*seat)))
+                .map(|(seat, _)| seat)
+                .expect("a game has players");
+            let deposit = self.riichi_sticks as i32 * 1000;
+            self.players[top].score += deposit;
+            self.players[top].score_delta += deposit;
+            self.riichi_sticks = 0;
+        }
+        self.is_done = true;
+        if !self.skip_mjai_logging {
+            // The external profile owner already published the paused hand's
+            // end_kyoku before deciding the terminal boundary.
+            if !(self.policy_external_rounds && self.needs_initialize_next_round) {
+                let mut ek = serde_json::Map::new();
+                ek.insert("type".to_string(), Value::String("end_kyoku".to_string()));
+                self._push_mjai_event(Value::Object(ek));
+            }
+
+            let mut ev = serde_json::Map::new();
+            ev.insert("type".to_string(), Value::String("end_game".to_string()));
+            self._push_mjai_event(Value::Object(ev));
+        }
+    }
+
+    pub fn apply_mjai_event(&mut self, event: MjaiEvent) {
+        <Self as GameStateEventHandler>::apply_mjai_event(self, event)
+    }
+
+    pub fn apply_log_action(&mut self, action: &LogAction) {
+        <Self as GameStateEventHandler>::apply_log_action(self, action)
+    }
+}
+
+impl GameState {
+    pub fn _push_mjai_event(&mut self, event: Value) {
+        if self.skip_mjai_logging {
+            return;
+        }
+        let json_str = serde_json::to_string(&event).expect("valid JSON");
+        self.mjai_log.push(json_str.clone());
+
+        let type_str = event["type"].as_str().unwrap_or("");
+        let actor = event["actor"].as_u64().map(|a| a as usize);
+
+        let np = NP;
+        for pid in 0..np {
+            let should_push = true;
+            let mut final_json = json_str.clone();
+
+            if type_str == "start_kyoku" {
+                if let Some(tehais_val) = event.get("tehais").and_then(|v| v.as_array()) {
+                    let mut masked_tehais = Vec::new();
+                    for (i, hand_val) in tehais_val.iter().enumerate() {
+                        if i == pid {
+                            masked_tehais.push(hand_val.clone());
+                        } else {
+                            let len = hand_val
+                                .as_array()
+                                .map(|a| a.len())
+                                .unwrap_or(INITIAL_HAND_SIZE);
+                            let masked = vec!["?".to_string(); len];
+                            masked_tehais.push(serde_json::to_value(masked).expect("valid JSON"));
+                        }
+                    }
+                    let mut masked_event = event
+                        .as_object()
+                        .expect("event must be a JSON object")
+                        .clone();
+                    masked_event.insert("tehais".to_string(), Value::Array(masked_tehais));
+                    final_json =
+                        serde_json::to_string(&Value::Object(masked_event)).expect("valid JSON");
+                }
+            } else if type_str == "tsumo"
+                && let Some(act_id) = actor
+                && act_id != pid
+            {
+                let mut masked_event = event
+                    .as_object()
+                    .expect("event must be a JSON object")
+                    .clone();
+                masked_event.insert("pai".to_string(), Value::String("?".to_string()));
+                final_json =
+                    serde_json::to_string(&Value::Object(masked_event)).expect("valid JSON");
+            }
+
+            if should_push {
+                self.mjai_log_per_player[pid].push(final_json);
+            }
+        }
+
+        // Incrementally update pre-computed progression cache.
+        // Uses the original (unmasked) event Value directly — no JSON parsing.
+        #[cfg(feature = "python")]
+        if self.enable_seq_caching
+            && let Some(entry) =
+                crate::observation::sequence_features::process_single_event_progression(
+                    &event,
+                    &mut self.round_seq_prog_pending_reach,
+                )
+        {
+            Arc::make_mut(&mut self.round_seq_progression).push(entry);
+        }
+    }
+}

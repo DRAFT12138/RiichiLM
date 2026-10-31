@@ -1,0 +1,183 @@
+{
+  "ruleset_id": "majsoul-web-tonpuu",
+  "revision": "web-processing-assumption-2026-10-26",
+  "platform": "PLATFORM_MAJSOUL",
+  "mode": "MODE_TONPUU",
+  "rule_options": {
+    "aka_counts": [
+      1,
+      1,
+      1
+    ],
+    "kuitan": true,
+    "atozuke": true,
+    "multiple_ron": "MULTIRON_ALL",
+    "kuicae": "KUICAE_SAME_AND_SUJI",
+    "ankan_chankan": "CHANKAN_KOKUSHI",
+    "riichi_min_score": 1000,
+    "riichi_min_live": 4,
+    "riichi_kan_policy": "RIICHI_KAN_WAITS",
+    "kazoe": "KAZOE_YAKUMAN",
+    "kiriage": false,
+    "yakuman_multipliers": [
+      {
+        "name": "Y_TENHOU",
+        "count": 1
+      },
+      {
+        "name": "Y_CHIIHOU",
+        "count": 1
+      },
+      {
+        "name": "Y_DAISANGEN",
+        "count": 1
+      },
+      {
+        "name": "Y_SUUANKOU",
+        "count": 1
+      },
+      {
+        "name": "Y_TSUUIISOU",
+        "count": 1
+      },
+      {
+        "name": "Y_RYUUIISOU",
+        "count": 1
+      },
+      {
+        "name": "Y_CHINROUTOU",
+        "count": 1
+      },
+      {
+        "name": "Y_KOKUSHI",
+        "count": 1
+      },
+      {
+        "name": "Y_SHOUSUUSHII",
+        "count": 1
+      },
+      {
+        "name": "Y_DAISUUSHII",
+        "count": 2
+      },
+      {
+        "name": "Y_SUUKANTSU",
+        "count": 1
+      },
+      {
+        "name": "Y_CHUUREN",
+        "count": 1
+      },
+      {
+        "name": "Y_SUUANKOU_TANKI",
+        "count": 2
+      },
+      {
+        "name": "Y_KOKUSHI_13",
+        "count": 2
+      },
+      {
+        "name": "Y_JUNSEI_CHUUREN",
+        "count": 2
+      }
+    ]
+  },
+  "initial_scores": [
+    25000,
+    25000,
+    25000,
+    25000
+  ],
+  "return_points": 25000,
+  "target_points": 30000,
+  "round_policy": {
+    "scheduled_rounds": 4,
+    "max_rounds": 8,
+    "bust_below_zero": true,
+    "stop_at_target": true,
+    "dealer_win_repeat": true,
+    "dealer_tenpai_repeat": true,
+    "dealer_win_stop": true,
+    "dealer_tenpai_stop": true,
+    "tie_order": "starting_dealer_rotation",
+    "end_priority": [
+      "END_BUST",
+      "END_DEALER_STOP",
+      "END_TARGET_REACHED",
+      "END_MAX_ROUND",
+      "END_NORMAL"
+    ]
+  },
+  "riichi_policy": {
+    "deduct_at": "accept",
+    "allow_furiten": true,
+    "allow_open": false,
+    "ippatsu_cancel_on_call": true,
+    "ippatsu_cancel_on_ankan": true
+  },
+  "furiten_policy": {
+    "miss_ron_on_call": true,
+    "temp_clear": "own_draw",
+    "riichi_clear": "round_start",
+    "response_collection": "priority_short_circuit"
+  },
+  "kan_policy": {
+    "max_kan": 4,
+    "live_cost_at": "rinshan_draw",
+    "rinshan_cost_at": "draw",
+    "allow_kakan_chankan": true,
+    "ankan_public": "base_only",
+    "four_kan_abort": "after_discard_response_if_multiple_owners"
+  },
+  "dora_timing": {
+    "ankan": "commit",
+    "daiminkan": "before_discard_or_next_rinshan",
+    "kakan": "before_discard_or_next_rinshan",
+    "reveal_before_ron": false
+  },
+  "score_policy": {
+    "min_yaku_han": 1,
+    "double_wind_pair_fu": 4,
+    "pinfu_tsumo_fu": 20,
+    "chiitoitsu_fu": 25,
+    "yakuman_stack": true,
+    "dealer_first_discard": "source"
+  },
+  "payment_policy": {
+    "honba_ron_each": 300,
+    "honba_tsumo_each": 100,
+    "multi_ron_honba": "nearest",
+    "multi_ron_kyotaku": "nearest",
+    "pao_scope": "liable_units",
+    "pao_ron": "half_with_discarder",
+    "pao_tsumo": "liable_pays_all",
+    "noten_total": 3000,
+    "nagashi": "independent_tsumo",
+    "nagashi_noten": false,
+    "final_kyotaku": "first_rank"
+  },
+  "abort_policy": {
+    "kyuushu": true,
+    "suufon": true,
+    "suucha_riichi": true,
+    "suukaikan": true,
+    "priority": [
+      "ron",
+      "four_kan",
+      "four_riichi",
+      "four_winds",
+      "exhaustive"
+    ]
+  },
+  "report_options": {
+    "uma": {
+      "$": "UNKNOWN"
+    },
+    "oka": {
+      "$": "UNKNOWN"
+    },
+    "rounding": {
+      "$": "UNKNOWN"
+    }
+  }
+}

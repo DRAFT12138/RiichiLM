@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - phase1_schema
+  - _self_
+  - runtime: bf16
+  - data: majsoul_policy
+  - model: qwen3_policy
+  - optimizer: adam
+  - training: default
+  - validation: default
+  - evaluation: default
+  - checkpoint: default
+  - observability: local
+  - output: local
+  - experiment: mahjong_policy
+evaluation:
+  batch_size: 1
+training:
+  max_updates: 200

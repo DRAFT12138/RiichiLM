@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - phase1_schema
+  - _self_
+  - runtime: default
+  - data: synthetic
+  - model: mock_mlp
+  - optimizer: adam
+  - training: default
+  - validation: default
+  - evaluation: default
+  - checkpoint: default
+  - observability: local
+  - output: local
+  - experiment: mock

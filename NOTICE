@@ -1,0 +1,31 @@
+Mahjong
+Copyright 2026 Mahjong contributors
+
+This project's code is licensed under the Apache License, Version 2.0.
+See LICENSE for the full license text.
+
+Third-party source attribution
+------------------------------
+This project includes a modified source snapshot of RiichiEnv in
+envs/riichienv/, based on upstream version 0.4.10, commit
+479c1faeb33d082965eef8198f63261a79c0fce3.
+
+RiichiEnv
+Copyright 2026 Kohei Ozaki
+Source: https://github.com/smly/RiichiEnv
+License: Apache License, Version 2.0 (envs/riichienv/LICENSE)
+
+The original license and source copyright notices are retained.
+Local modifications support this project's offline MJAI replay and cleaning.
+
+Third-party dependencies remain subject to their respective licenses.
+This code license does not grant rights to separately sourced game records,
+datasets, or separately distributed model weights.
+
+Mahjong tile artwork
+--------------------
+Regular SVG tiles by FluffyStuff (Kristján).
+Source: https://github.com/FluffyStuff/riichi-mahjong-tiles
+Snapshot: 26e127ba2117f45cdce5ea0225748cc0cfad3169
+Public domain / CC0 1.0. The upstream dedication and source notes are retained in
+web/src/assets/tiles/. The artwork is bundled locally with the browser client.

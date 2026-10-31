@@ -1,0 +1,5 @@
+# @package evaluation
+seed: 20261012
+batch_size: 32
+# No evaluation dataset is distributed. Set this to your own compatible directory.
+nanikiru_dir: null

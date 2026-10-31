@@ -1,0 +1,5 @@
+# @package runtime
+device: cuda:0
+precision: bf16-mixed
+deterministic: true
+cpu_threads: 1

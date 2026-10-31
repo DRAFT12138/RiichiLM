@@ -1,0 +1,7 @@
+# @package model
+name: mock_mlp
+input_schema: synthetic-regression/v1
+input_dim: 8
+hidden_dim: 32
+dropout: 0.0
+target_rule: linear-teacher/v1

@@ -1,0 +1,8 @@
+# @package observability
+log_level: INFO
+metrics_every_updates: 10
+heartbeat_seconds: 2.0
+local_flush_seconds: 1.0
+tensorboard_enabled: true
+tensorboard_flush_seconds: 2.0
+resource_seconds: 2.0

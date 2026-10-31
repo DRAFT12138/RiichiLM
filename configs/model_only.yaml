@@ -1,0 +1,5 @@
+# Model construction only; no regression data or training configuration.
+defaults:
+  - model: qwen3
+  - _self_
+seed: 20261011

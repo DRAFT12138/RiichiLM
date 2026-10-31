@@ -1,0 +1,39 @@
+name: Public regression
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  cpu-and-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HIP_VISIBLE_DEVICES: ""
+      ROCR_VISIBLE_DEVICES: ""
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: rustup toolchain install 1.92.0 --profile minimal
+      - run: |
+          uv venv --python 3.14 .venv
+          uv pip install --python .venv/bin/python -r requirements-cuda.txt
+          uv pip install --python .venv/bin/python --no-deps -e .
+          .venv/bin/python -m maturin build --release --locked --no-default-features --manifest-path envs/riichienv/riichienv-python/Cargo.toml --interpreter .venv/bin/python --out /tmp/rules-wheels
+          uv pip install --python .venv/bin/python --no-deps /tmp/rules-wheels/*.whl
+      - run: .venv/bin/python scripts/verify-public.py
+      - working-directory: web
+        run: |
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium
+          npm run test:e2e
