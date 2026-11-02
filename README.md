@@ -120,6 +120,15 @@ For GPU model players, start with `--device cuda:0` (also used by ROCm). Web inf
 
 For custom Qwen3 policy weights, place `.pt` or `.pth` files directly in `weights/` and refresh the model list, or pass `--weights-root /path/to/weights`. This entry accepts training `state.pt`, inference exports and plain state dictionaries without run metadata, training data or fingerprint checks; model tensors must fit the network. Plain state dictionaries default to the current v2 input, 8,192-token context and RoPE theta 1,000,000; override these with a same-stem `.json` model configuration. Export a smaller file without optimizer or recovery state using `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt`; tensor precision and the original file are preserved.
 
+Run four AI players without a browser using `arena-evaluate`. Players accept `weights:<file>`, `checkpoint:<directory>`, `llm:<id>`, or `random`. GPU models use the same BF16/FlashAttention execution as Web. Repeated model seats share weights and keep independent sampling RNGs. Reports include scores and net points grouped by model, with per-seat averages for models occupying multiple seats.
+
+```bash
+.venv/bin/python -m mahjong arena-evaluate \
+  --players weights:weights/my-policy.pt weights:weights/my-policy.pt random random \
+  --mode hanchan --device cuda:0 --seeds 42 43 \
+  --output outputs/arena/two-hanchan.json
+```
+
 To add external LLM players, create a local JSON configuration using this structure, then add `--llm-config /path/to/players.json` to `web-play`:
 
 ```json

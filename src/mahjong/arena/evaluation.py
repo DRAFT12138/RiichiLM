@@ -11,7 +11,7 @@ import time
 from mahjong.contracts import MahjongError
 from .llm import LLMPlayer, PROMPT_VERSION, SYSTEM_PROMPT, load_llm_configs
 from .loop import DecisionLoop
-from .players import ModelPlayer, RandomPlayer
+from .players import ModelPlayer, RandomPlayer, load_model_policy
 
 
 def run_match(bridge, players, *, seed, single_round=False, decision_timeout=120,
@@ -59,7 +59,8 @@ def run_match(bridge, players, *, seed, single_round=False, decision_timeout=120
 
 def evaluate_cli(options, *, cancel=None):
     from .bridge import ArenaDecisionBridge, profile_for
-    from mahjong.inference.policy import PolicyInference, digest
+    from mahjong.inference.policy import digest
+    from mahjong.policy.execution import policy_precision
 
     if (not math.isfinite(options.decision_timeout) or options.decision_timeout <= 0
             or options.max_windows <= 0 or len(set(options.seeds)) != len(options.seeds)
@@ -69,23 +70,39 @@ def evaluate_cli(options, *, cancel=None):
     if output.exists():
         raise MahjongError("CONFIG_INVALID", "评估报告已存在，请使用新路径")
     configs, policies, identities = load_llm_configs(options.llm_config), {}, []
+    sources, source_identities = {}, {}
     for spec in options.players:
         if spec == "random":
             identities.append(dict(kind="random"))
         elif spec in configs:
             identities.append(dict(kind="llm", **configs[spec].public(),
                                    config=asdict(configs[spec])))
-        elif spec.startswith("checkpoint:"):
-            path = spec.removeprefix("checkpoint:")
-            if spec not in policies:
-                policy = PolicyInference.from_checkpoint(path, device=options.device)
-                policy.verify_training_profile(profile_for("hanchan"))
-                policies[spec] = policy
-            source = policies[spec].source
-            identities.append(dict(kind="model", **{k: source[k] for k in (
-                "run_id", "attempt_id", "checkpoint_id", "manifest_hash", "global_step")}))
+        elif spec.startswith(("checkpoint:", "weights:")):
+            prefix, path = spec.split(':', 1)
+            kind = 'weights' if prefix == 'weights' else 'checkpoint'
+            if not path:
+                raise MahjongError('CONFIG_INVALID', 'model player path is empty')
+            path = Path(path).resolve()
+            key = (kind, str(path))
+            if key not in sources:
+                policy = load_model_policy(path, kind=kind, device=options.device)
+                if kind == 'checkpoint':
+                    policy.verify_training_profile(profile_for("hanchan"))
+                    source = policy.source
+                    identity = {k: source[k] for k in (
+                        'run_id', 'attempt_id', 'checkpoint_id', 'manifest_hash', 'global_step')}
+                else:
+                    with path.open('rb') as stream:
+                        sha = hashlib.file_digest(stream, 'sha256').hexdigest()
+                    identity = dict(checkpoint_id=path.name, state_sha256=sha)
+                sources[key] = policy
+                source_identities[key] = dict(kind='model', source_kind=kind, **identity,
+                                             precision=policy_precision(policy.model),
+                                             model_binding_digest=policy.binding_digest)
+            policies[spec] = sources[key]
+            identities.append(deepcopy(source_identities[key]))
         else:
-            raise MahjongError("CONFIG_INVALID", "玩家必须为 random、已配置的 llm:<id> 或 checkpoint:<目录>")
+            raise MahjongError("CONFIG_INVALID", "玩家必须为 random、已配置的 llm:<id>、checkpoint:<目录> 或 weights:<文件>")
     outcomes = []
     for seed in options.seeds:
         for rotation in range(4 if options.rotate else 1):
@@ -106,13 +123,14 @@ def evaluate_cli(options, *, cancel=None):
                     controllers.append(("model", policies[spec]))
             bridge = ArenaDecisionBridge(profile_for(options.mode), model_binding_digest="arena-non-model")
             bridge.bind_controllers(controllers)
+            print(f"seed={seed} rotation={rotation} started", flush=True)
             outcome = run_match(bridge, players, seed=seed, single_round=options.mode == "single",
                                 decision_timeout=options.decision_timeout,
                                 max_windows=options.max_windows, cancel=cancel)
             outcome.update(rotation=rotation, player_indices=order,
                            model_sampling_seeds=[p.generator.initial_seed() if isinstance(p, ModelPlayer) else None for p in players])
             outcomes.append(outcome)
-            print(f"seed={seed} rotation={rotation} {outcome['status']} windows={outcome['windows']}", flush=True)
+            print(f"seed={seed} rotation={rotation} {outcome['status']} windows={outcome['windows']} scores={outcome['scores']}", flush=True)
             if outcome["status"] == "cancelled":
                 break
         if outcomes[-1]["status"] == "cancelled":
@@ -138,10 +156,50 @@ def evaluate_cli(options, *, cancel=None):
                   seeds=options.seeds, rotate=options.rotate, decision_timeout=options.decision_timeout,
                   max_windows=options.max_windows, outcomes=outcomes, seed_groups=groups,
                   completed_seed_groups=len(groups), failed_matches=sum(o["status"] != "complete" for o in outcomes),
-                  model_sampling="categorical", strength_claim=False)
+                  model_sampling="categorical", strength_claim=False,
+                  model_summaries=model_summaries(identities, outcomes, groups,
+                                                 profile_for(options.mode)['initial_scores']))
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("x") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2, allow_nan=False)
         stream.write("\n")
     print(f"评估报告：{output}", flush=True)
     return 0 if report["failed_matches"] == 0 else 1
+
+
+def model_summaries(identities, outcomes, groups, initial_scores):
+    """Group repeated model seats; only fully completed seed groups count."""
+    from mahjong.inference.policy import digest
+
+    models = {}
+    for index, identity in enumerate(identities):
+        if identity['kind'] != 'model':
+            continue
+        key = digest(identity)
+        if key not in models:
+            models[key] = dict(identity=deepcopy(identity), player_indices=[],
+                               appearances=0, total_score=0, net_points=0, ranks=[])
+        models[key]['player_indices'].append(index)
+    complete_seeds = {g['seed'] for g in groups}
+    for match in outcomes:
+        if match['seed'] not in complete_seeds or match['status'] != 'complete':
+            continue
+        for seat, index in enumerate(match['player_indices']):
+            identity = identities[index]
+            if identity['kind'] != 'model':
+                continue
+            row = models[digest(identity)]
+            row['appearances'] += 1
+            row['total_score'] += match['scores'][seat]
+            row['net_points'] += match['scores'][seat] - initial_scores[seat]
+            if match['ranks'] is not None:
+                row['ranks'].append(match['ranks'][seat])
+    result = []
+    for row in models.values():
+        ranks = row.pop('ranks')
+        count = row['appearances']
+        row.update(mean_score=row['total_score'] / count if count else None,
+                   mean_net_points=row['net_points'] / count if count else None,
+                   mean_rank=sum(ranks) / len(ranks) if ranks else None)
+        result.append(row)
+    return result

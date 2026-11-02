@@ -8,11 +8,10 @@ import resource
 import time
 
 from mahjong.contracts import MahjongError
-from mahjong.inference.policy import PolicyInference
 from mahjong.arena.bridge import ArenaDecisionBridge as WebDecisionBridge, profile_for
 from mahjong.arena.llm import LLMConfig, LLMPlayer, plain
 from mahjong.arena.loop import DecisionLoop
-from mahjong.arena.players import ModelPlayer, RandomPlayer
+from mahjong.arena.players import ModelPlayer, RandomPlayer, load_model_policy
 
 
 class TableEngine:
@@ -30,7 +29,6 @@ class TableEngine:
         )
         start = time.monotonic()
         cache = {}
-        precision = 'bf16-mixed' if device == 'cuda:0' else '32-true'
         controllers = [] if self.spectator else [("human", None)]
         players = [] if self.spectator else [None]
         self.controller_items = config["opponents"] if self.spectator else [None, *config["opponents"]]
@@ -46,10 +44,9 @@ class TableEngine:
                 continue
             key = (item["path"], item["manifest_hash"])
             if key not in cache:
-                if item.get("kind") == "weights":
-                    policy = PolicyInference.from_weights(item["path"], device=device, precision=precision)
-                else:
-                    policy = PolicyInference.from_checkpoint(item["path"], device=device, precision=precision)
+                kind = 'weights' if item.get('kind') == 'weights' else 'checkpoint'
+                policy = load_model_policy(item['path'], kind=kind, device=device)
+                if kind == 'checkpoint':
                     actual = policy.source
                     if (
                         any(

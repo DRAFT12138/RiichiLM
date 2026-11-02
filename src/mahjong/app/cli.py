@@ -58,7 +58,7 @@ def parser():
     web.add_argument('--llm-config', help='服务端 LLM 玩家 JSON 配置；密钥只从环境变量读取')
     arena = commands.add_parser('arena-evaluate', help='通用玩家对战评估：LLM、本地 NTP 和随机策略')
     arena.add_argument('--players', nargs=4, required=True, metavar='PLAYER',
-                       help='每席 random、llm:<id> 或 checkpoint:<目录>')
+                       help='每席 random、llm:<id>、checkpoint:<目录> 或 weights:<文件>')
     arena.add_argument('--llm-config', help='与 web-play 共用的 LLM 玩家 JSON 配置')
     arena.add_argument('--mode', choices=('single', 'tonpuu', 'hanchan'), default='hanchan')
     arena.add_argument('--device', choices=('cpu', 'cuda:0'), default='cpu')

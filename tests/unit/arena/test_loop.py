@@ -3,9 +3,10 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from mahjong.arena.bridge import ArenaDecisionBridge, profile_for
-from mahjong.arena.evaluation import evaluate_cli, run_match
+from mahjong.arena.evaluation import evaluate_cli, run_match, model_summaries
 from mahjong.arena.llm import Completion, LLMConfig, LLMPlayer, decision_prompt
 from mahjong.arena.loop import DecisionLoop
 from mahjong.arena.players import PlayerChoice, RandomPlayer
@@ -13,6 +14,7 @@ from mahjong.contracts import MahjongError
 from mahjong.tokenizer import Atom
 from mahjong.tokenizer.policy_context import PolicyContextInput
 from tests.unit.inference.bridge_fixtures import wall_for
+from tests.unit.inference.test_weights import weights
 
 
 class ChoosingClient:
@@ -149,3 +151,68 @@ def test_incomplete_seed_groups_remain_reported_but_do_not_enter_score_summary(t
     report = json.loads((tmp_path / "failed.json").read_text())
     assert report["completed_seed_groups"] == 0 and report["seed_groups"] == []
     assert report["failed_matches"] == 4 and len(report["outcomes"]) == 4
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda:0', marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason='GPU unavailable'))])
+def test_cli_weights_share_web_execution_and_deduplicate_paths(weights, tmp_path, monkeypatch, device):
+    if device == 'cuda:0' and not torch.cuda.is_bf16_supported():
+        pytest.skip('BF16 GPU unavailable')
+    from mahjong.arena import evaluation
+    from mahjong.policy.execution import policy_precision
+    path, _, _ = weights
+    path.with_suffix('.json').write_text(json.dumps({'attn_implementation': 'eager'}))
+    original = evaluation.run_match
+    seen = []
+
+    def checked_match(bridge, players, **kwargs):
+        a, b = players[:2]
+        assert a.policy is b.policy
+        assert a.generator is not b.generator
+        assert a.generator.initial_seed() != b.generator.initial_seed()
+        assert policy_precision(a.policy.model) == ('bf16-mixed' if device == 'cuda:0' else '32-true')
+        assert a.policy.lm.config._attn_implementation == ('sdpa' if device == 'cuda:0' else 'eager')
+        seen.append(a.policy)
+        return original(bridge, players, **kwargs)
+
+    monkeypatch.setattr(evaluation, 'run_match', checked_match)
+    output = tmp_path / 'custom-arena.json'
+    args = SimpleNamespace(players=[f'weights:{path}', f'weights:{path.parent}/./{path.name}',
+                                   'random', 'random'], mode='single', device=device,
+                           llm_config=None, seeds=[42, 43], rotate=False,
+                           decision_timeout=30, max_windows=1000, output=str(output))
+    assert evaluate_cli(args) == 0
+    assert len(seen) == 2 and seen[0] is seen[1]
+    report = json.loads(output.read_text())
+    assert report['failed_matches'] == 0 and report['completed_seed_groups'] == 2
+    assert report['players'][0] == report['players'][1]
+    assert report['players'][0]['source_kind'] == 'weights'
+    summary, = report['model_summaries']
+    assert summary['appearances'] == 4 and summary['player_indices'] == [0, 1]
+    total = sum(sum(match['scores'][:2]) for match in report['outcomes'])
+    assert summary['total_score'] == total
+    assert summary['net_points'] == total - 100000
+    assert summary['mean_score'] == total / 4
+    assert summary['mean_rank'] is None
+
+
+def test_model_summary_counts_repeated_seats_rotations_and_only_complete_groups():
+    a, b, c = [dict(kind='model', checkpoint_id=name) for name in ('A', 'B', 'C')]
+    identities = [a, a, b, c]
+    outcomes = [
+        dict(seed=42, status='complete', player_indices=[0, 1, 2, 3],
+             scores=[30000, 20000, 40000, 10000], ranks=[2, 3, 1, 4]),
+        dict(seed=43, status='complete', player_indices=[2, 0, 3, 1],
+             scores=[27000, 23000, 15000, 35000], ranks=[2, 3, 4, 1]),
+        dict(seed=44, status='complete', player_indices=[0, 1, 2, 3],
+             scores=[100000, 0, 0, 0], ranks=[1, 2, 3, 4]),
+    ]
+    result = model_summaries(identities, outcomes, [dict(seed=42), dict(seed=43)], [25000]*4)
+    assert [row['appearances'] for row in result] == [4, 2, 2]
+    assert [row['total_score'] for row in result] == [108000, 67000, 25000]
+    assert [row['net_points'] for row in result] == [8000, 17000, -25000]
+    assert [row['mean_score'] for row in result] == [27000, 33500, 12500]
+    assert [row['mean_rank'] for row in result] == [2.25, 1.5, 4]
+    assert sum(row['net_points'] for row in result) == 0
+    empty = model_summaries(identities, outcomes, [], [25000]*4)
+    assert all(row['appearances'] == 0 and row['mean_score'] is None for row in empty)

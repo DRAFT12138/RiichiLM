@@ -120,6 +120,15 @@ GPU でモデルを使う場合は `--device cuda:0` を指定します（ROCm �
 
 自前の Qwen3 方策重みは `.pt`／`.pth` を `weights/` に置いてモデル一覧を更新するか、`--weights-root /path/to/weights` で指定します。学習用 `state.pt`、推論用エクスポート、裸の `state_dict` に対応し、run メタデータ・学習データ・指紋の一致を要求しません。テンソルとネットワーク構造の互換性は必要です。裸の重みは現在の v2 入力、8192 token、RoPE theta 1000000 を既定とし、同名の `.json` モデル設定で変更できます。`.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` で optimizer と復帰状態を除去し、テンソル精度と元ファイルを保持します。
 
+`arena-evaluate` でブラウザーを使わずに四 AI 対局を実行できます。プレイヤーは `weights:<ファイル>`、`checkpoint:<ディレクトリ>`、`llm:<id>`、`random` に対応します。GPU モデルは Web と同じ BF16／FlashAttention を使い、同一モデルの複数席は重みを共有し、サンプリング RNG は独立します。レポートはモデル別に最終点数と純増減を集計し、複数席のモデルを比較するための一席あたり平均も記録します。
+
+```bash
+.venv/bin/python -m mahjong arena-evaluate \
+  --players weights:weights/my-policy.pt weights:weights/my-policy.pt random random \
+  --mode hanchan --device cuda:0 --seeds 42 43 \
+  --output outputs/arena/two-hanchan.json
+```
+
 外部 LLM を追加するには、次の構造の JSON 設定を作成し、`web-play` に `--llm-config /path/to/players.json` を追加します。
 
 ```json

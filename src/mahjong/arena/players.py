@@ -53,3 +53,17 @@ class ModelPlayer:
             generator=self.generator, deadline_monotonic=deadline, cancel=cancel
         )
         return PlayerChoice(view.key, generation=result)
+
+
+def load_model_policy(path, *, kind='checkpoint', device='cpu'):
+    """Use one model execution policy for Web and headless model players."""
+    from mahjong.inference.policy import PolicyInference
+
+    precision = 'bf16-mixed' if device == 'cuda:0' else '32-true'
+    if kind == 'weights':
+        loader = PolicyInference.from_weights
+    elif kind == 'checkpoint':
+        loader = PolicyInference.from_checkpoint
+    else:
+        raise MahjongError('CONFIG_INVALID', 'unknown model player source')
+    return loader(path, device=device, precision=precision)

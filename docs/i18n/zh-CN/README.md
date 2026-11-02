@@ -120,6 +120,15 @@ uv pip install --python .venv/bin/python --no-deps outputs/wheels/riichienv-*.wh
 
 自定义 Qwen3 策略权重：将 `.pt`／`.pth` 直接放入 `weights/` 并刷新模型列表，或传入 `--weights-root /path/to/weights`。支持训练 `state.pt`、精简推理文件和裸 `state_dict`，不要求 run 元数据、训练数据或指纹一致；模型张量须与网络结构相容。裸权重默认当前 v2 输入、8192 token 和 RoPE theta 1000000，可通过同名 `.json` 模型配置覆盖。使用 `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` 去掉优化器及恢复状态，保留张量精度和原文件。
 
+使用 `arena-evaluate` 可在无浏览器环境运行四 AI 对局，玩家支持 `weights:<文件>`、`checkpoint:<目录>`、`llm:<id>` 或 `random`。GPU 模型与 Web 使用相同的 BF16／FlashAttention 路径；同模型多席共享权重、采样 RNG 独立。报告按模型汇总最终点数和净得失点，并列出每席均值，便于比较占多个席位的模型。
+
+```bash
+.venv/bin/python -m mahjong arena-evaluate \
+  --players weights:weights/my-policy.pt weights:weights/my-policy.pt random random \
+  --mode hanchan --device cuda:0 --seeds 42 43 \
+  --output outputs/arena/two-hanchan.json
+```
+
 外接 LLM：自行创建以下结构的 JSON 配置，在 `web-play` 后追加 `--llm-config /path/to/players.json`：
 
 ```json
