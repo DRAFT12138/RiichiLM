@@ -185,8 +185,14 @@ def test_llm_checkpoint_and_random_share_a_table_without_bypassing_model_binding
     assert report["outcomes"][0]["model_sampling_seeds"][0] is not None
 
 
-def test_four_checkpoint_spectators_share_weights_but_keep_independent_sampling_rng(models):
-    engine = TableEngine(dict(mode="single", opponents=[models[2]] * 4, spectator=True, seed=42))
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda:0', marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason='GPU unavailable'))])
+def test_four_checkpoint_spectators_share_weights_but_keep_independent_sampling_rng(models, device):
+    if device == 'cuda:0' and not torch.cuda.is_bf16_supported():
+        pytest.skip('BF16 GPU unavailable')
+    engine = TableEngine(dict(mode="single", opponents=[models[2]] * 4, spectator=True, seed=42), device=device)
+    from mahjong.policy.execution import policy_precision
+    assert policy_precision(engine.controllers[0][1].model) == ('bf16-mixed' if device == 'cuda:0' else '32-true')
     assert len({id(policy) for _, policy in engine.controllers}) == 1
     seeds = [player.generator.initial_seed() for player in engine.loop.players]
     assert len(set(seeds)) == 4

@@ -30,6 +30,7 @@ class TableEngine:
         )
         start = time.monotonic()
         cache = {}
+        precision = 'bf16-mixed' if device == 'cuda:0' else '32-true'
         controllers = [] if self.spectator else [("human", None)]
         players = [] if self.spectator else [None]
         self.controller_items = config["opponents"] if self.spectator else [None, *config["opponents"]]
@@ -46,9 +47,9 @@ class TableEngine:
             key = (item["path"], item["manifest_hash"])
             if key not in cache:
                 if item.get("kind") == "weights":
-                    policy = PolicyInference.from_weights(item["path"], device=device)
+                    policy = PolicyInference.from_weights(item["path"], device=device, precision=precision)
                 else:
-                    policy = PolicyInference.from_checkpoint(item["path"], device=device)
+                    policy = PolicyInference.from_checkpoint(item["path"], device=device, precision=precision)
                     actual = policy.source
                     if (
                         any(

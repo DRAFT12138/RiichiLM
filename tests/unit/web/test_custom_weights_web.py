@@ -42,13 +42,29 @@ def test_custom_directory_does_not_follow_outside_weights_or_sidecars(tmp_path):
     assert not c.data['runs'] and len(c.data['errors']) == 3
 
 
-def test_custom_weights_play_without_training_data_and_share_model_per_table(weights, tmp_path):
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda:0', marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason='GPU unavailable'))])
+def test_custom_weights_play_without_training_data_and_share_model_per_table(weights, tmp_path, device):
+    if device == 'cuda:0' and not torch.cuda.is_bf16_supported():
+        pytest.skip('BF16 GPU unavailable')
     path, _, _ = weights
+    # GPU execution must also handle a custom file requesting eager attention.
+    if device == 'cuda:0':
+        path.with_suffix('.json').write_text(json.dumps({'attn_implementation': 'eager'}))
     catalog = Catalog(tmp_path / 'outputs', weights_root=path.parent)
     cp = catalog.data['runs'][0]['checkpoints'][0]
     entry = catalog.resolve(cp['id'])
     engine = TableEngine(dict(mode='single', opponents=[entry] * 4,
-                             spectator=True, seed=42))
+                             spectator=True, seed=42), device=device)
+    policy = engine.controllers[0][1]
+    from mahjong.policy.execution import policy_precision
+    assert policy_precision(policy.model) == ('bf16-mixed' if device == 'cuda:0' else '32-true')
+    assert policy.lm.config._attn_implementation == 'sdpa'
+    assert all(p.dtype == torch.float32 for p in policy.model.parameters())
+    if device == 'cuda:0':
+        from mahjong.inference.policy import PolicyInference
+        fp32 = PolicyInference.from_weights(path, device=device)
+        assert fp32.binding_digest != policy.binding_digest
     assert len({id(p) for _, p in engine.controllers}) == 1
     assert len({p.generator.initial_seed() for p in engine.loop.players}) == 4
     for _ in range(4):

@@ -116,6 +116,8 @@ Node.js 20.19+ または 22.12+ でフロントエンドをビルドし、ロー
 
 表示されたループバック URL を開きます。ランダム戦略ならデータ・モデルのダウンロード・API キーは不要です。ビルド後の配信には Python のみ必要です。サーバーはローカル利用向けで、対局は現在のセッション内だけに保持され、再読み込み・退出後は最初からになります。
 
+GPU でモデルを使う場合は `--device cuda:0` を指定します（ROCm も同じ名称です）。Web 推論は BF16 計算と FlashAttention を使い、モデルパラメータは FP32 を保持します。CPU 推論は FP32 です。GPU モデル推論には BF16 と FlashAttention の対応が必要で、利用できない場合は明示的にエラーになります。半精度計算では FP32 と確率やサンプリング結果が異なる場合があります。
+
 自前の Qwen3 方策重みは `.pt`／`.pth` を `weights/` に置いてモデル一覧を更新するか、`--weights-root /path/to/weights` で指定します。学習用 `state.pt`、推論用エクスポート、裸の `state_dict` に対応し、run メタデータ・学習データ・指紋の一致を要求しません。テンソルとネットワーク構造の互換性は必要です。裸の重みは現在の v2 入力、8192 token、RoPE theta 1000000 を既定とし、同名の `.json` モデル設定で変更できます。`.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` で optimizer と復帰状態を除去し、テンソル精度と元ファイルを保持します。
 
 外部 LLM を追加するには、次の構造の JSON 設定を作成し、`web-play` に `--llm-config /path/to/players.json` を追加します。

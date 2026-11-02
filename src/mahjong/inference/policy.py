@@ -122,8 +122,8 @@ def legal_digest(view, suffixes):
 
 
 class PolicyInference:
-    def __init__(self, model, *, source=None):
-        from mahjong.policy.execution import policy_precision
+    def __init__(self, model, *, source=None, precision=None):
+        from mahjong.policy.execution import policy_precision, set_policy_precision
         self.model = model.eval()
         self.lm = model.causal_lm
         self.codec = MahjongTokenizer()
@@ -133,6 +133,14 @@ class PolicyInference:
         self.device = next(model.parameters()).device
         if any(p.dtype != torch.float32 for p in model.parameters()):
             fail('CONTRACT_MISMATCH', 'inference requires FP32 parameters')
+        if precision is not None:
+            if precision == 'bf16-mixed':
+                if self.device.type != 'cuda' or not torch.cuda.is_bf16_supported():
+                    fail('DEVICE_UNAVAILABLE', 'BF16 policy inference requires a supported GPU')
+                # An eager config from custom weights must not bypass the fused
+                # attention enforced by policy_execution on long GPU contexts.
+                self.lm.set_attn_implementation('sdpa')
+            set_policy_precision(model, precision)
         self.binding_digest = digest(dict(domain='majang-policy-inference-binding/v1',
             codec={**BINDING, 'codec_spec_sha256': self.codec.codec_spec_sha256},
             descriptor=asdict(model.descriptor()), precision=policy_precision(model),
@@ -142,16 +150,16 @@ class PolicyInference:
         self._views = {}
 
     @classmethod
-    def from_checkpoint(cls, path, *, device='cpu'):
+    def from_checkpoint(cls, path, *, device='cpu', precision=None):
         from .loading import load_policy_checkpoint
         model, source = load_policy_checkpoint(path, device=device)
-        return cls(model, source=source)
+        return cls(model, source=source, precision=precision)
 
     @classmethod
-    def from_weights(cls, path, *, device='cpu'):
+    def from_weights(cls, path, *, device='cpu', precision=None):
         from .weights import load_policy_weights
         model, source = load_policy_weights(path, device=device)
-        return cls(model, source=source)
+        return cls(model, source=source, precision=precision)
 
     @classmethod
     def from_actor_snapshot(cls, path, *, device='cpu'):
