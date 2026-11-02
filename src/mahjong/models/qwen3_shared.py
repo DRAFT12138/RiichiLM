@@ -149,7 +149,7 @@ class Qwen3SharedPolicyAdapter(Qwen3PolicyAdapter):
         if fused:
             if self._training_kernels is None:
                 from .shared_kernels import SharedTrainingKernels
-                self._training_kernels = SharedTrainingKernels()
+                self._training_kernels = SharedTrainingKernels(backbone.embed_tokens.weight.device)
             kernels = self._training_kernels
         P = payload['trunk_length']
         hidden = backbone.embed_tokens(payload['input_ids'])

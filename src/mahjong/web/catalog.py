@@ -33,18 +33,15 @@ def manifest_identity(path, root):
 
 
 class Catalog:
-    def __init__(self, root):
+    def __init__(self, root, *, weights_root=None):
         self.root = Path(root).resolve()
+        self.weights_root = None if weights_root is None else Path(weights_root).resolve()
         self._entries = {}
         self.refresh()
 
     def refresh(self):
         runs, entries, errors = [], {}, []
-        if not self.root.is_dir():
-            self._entries = {}
-            self.data = dict(runs=[], errors=["模型目录不存在，可直接使用随机对手。"])
-            return self.snapshot()
-        children = sorted(self.root.iterdir())
+        children = sorted(self.root.iterdir()) if self.root.is_dir() else []
         nested = self.root / "rl"
         if nested.is_dir() and nested.resolve().is_relative_to(self.root):
             children += sorted(nested.iterdir())
@@ -200,6 +197,9 @@ class Catalog:
                 yaml.YAMLError,
             ) as exc:
                 errors.append(f"{directory.name}: {exc}")
+        self._custom_weights(runs, entries, errors)
+        if not self.root.is_dir() and not runs:
+            errors.insert(0, "模型目录不存在，可直接使用随机对手。")
         self._entries = entries
         self.data = dict(runs=runs, errors=errors)
         return self.snapshot()
@@ -207,9 +207,50 @@ class Catalog:
     def snapshot(self):
         return deepcopy(self.data)
 
+    def _weight_signature(self, path):
+        path = Path(path)
+        if not path.resolve().is_relative_to(self.weights_root) or not path.is_file():
+            raise ValueError("weights outside custom directory or removed")
+        files = [path]
+        sidecar = path.with_suffix('.json')
+        if sidecar.exists():
+            if not sidecar.resolve().is_relative_to(self.weights_root):
+                raise ValueError("model config outside custom directory")
+            files.append(sidecar)
+        values = [(str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns,
+                   p.stat().st_ctime_ns, p.stat().st_ino) for p in files]
+        return hashlib.sha256(json.dumps([str(path.absolute()), values]).encode()).hexdigest()
+
+    def _custom_weights(self, runs, entries, errors):
+        if self.weights_root is None or not self.weights_root.is_dir():
+            return
+        # Listing reads filenames and stat metadata only, never torch containers.
+        for path in sorted(self.weights_root.iterdir()):
+            if path.name.startswith('.') or path.suffix.lower() not in ('.pt', '.pth'):
+                continue
+            try:
+                signature = self._weight_signature(path)
+                identity = 'weights:' + signature
+                run_id = 'weights:' + path.name
+                checkpoint = dict(id=identity, checkpoint_id=path.name, attempt_id='',
+                                  step=0, created_at=None, selectable=True, status="待加载验证")
+                entries[identity] = dict(kind='weights', path=str(path.absolute()),
+                                         manifest_hash=signature, run_id=run_id,
+                                         checkpoint_id=path.name, attempt_id='',
+                                         step=0, state_sha256=None)
+                runs.append(dict(run_id=run_id, experiment=path.stem, created_at=None,
+                                 training_type='Weights', attempts=[],
+                                 checkpoints=[checkpoint], errors=[]))
+            except (OSError, ValueError) as exc:
+                errors.append(f'{path.name}: {exc}')
+
     def resolve(self, entry_id):
         try:
             entry = deepcopy(self._entries[entry_id])
+            if entry.get('kind') == 'weights':
+                if self._weight_signature(entry['path']) != entry['manifest_hash']:
+                    raise ValueError("权重已变化，请刷新重选")
+                return entry
             manifest, sha = manifest_identity(
                 Path(entry["path"]) / "manifest.json", self.root
             )

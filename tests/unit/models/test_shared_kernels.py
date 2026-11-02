@@ -1,5 +1,6 @@
 """Shared pointwise fusion policy, failover and real compiled GPU equivalence."""
 import copy
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -12,6 +13,96 @@ from mahjong.contracts import MahjongError
 from mahjong.data.mahjong.shared_policy import collate_shared_group
 from tests.unit.models.test_qwen3_shared import config, samples
 from tests.unit.training.test_runtime import assert_equal
+
+
+@pytest.mark.parametrize('device,hip,arch,enabled', [
+    ('cpu', 'rocm', 'gfx1100', False),
+    ('cuda:0', None, '', False),
+    ('cuda:0', 'rocm', 'gfx1100', True),
+    ('cuda:0', 'rocm', 'gfx1100:xnack-', True),
+    ('cuda:0', 'rocm', 'gfx942', False),
+    ('cuda:0', 'rocm', 'gfx1200', False),
+])
+def test_rdna3_profile_is_local_to_validated_architecture(monkeypatch, device, hip, arch, enabled):
+    monkeypatch.setattr(torch.version, 'hip', hip)
+    queried = []
+    def properties(device):
+        queried.append(device)
+        return SimpleNamespace(gcnArchName=arch)
+    monkeypatch.setattr(torch.cuda, 'get_device_properties', properties)
+    options = []
+    def compile(function, **kwargs):
+        options.append(kwargs['options'])
+        return function
+    monkeypatch.setattr(torch, 'compile', compile)
+    kernels = SharedTrainingKernels(device)
+    value = torch.ones(1)
+    assert kernels.call('layer', lambda x: x, value) is value
+    assert kernels.call('norm', lambda x: x, value) is value
+    assert bool(options[0].get('reorder_for_locality_in_training')) is enabled
+    assert 'reorder_for_locality_in_training' not in options[1]
+    assert bool(queried) is (device != 'cpu' and hip is not None)
+
+
+def test_native_gqa_matches_repeated_heads_and_all_input_gradients():
+    from torch.nn.functional import scaled_dot_product_attention as attention
+    from transformers.models.qwen3.modeling_qwen3 import repeat_kv
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(42)
+        q = torch.randn(1, 12, 17, 64, dtype=torch.float64, requires_grad=True)
+        k = torch.randn(1, 4, 17, 64, dtype=torch.float64, requires_grad=True)
+        v = torch.randn_like(k, requires_grad=True)
+        expected = attention(q, repeat_kv(k, 3), repeat_kv(v, 3), is_causal=True)
+        actual = attention(q, k, v, is_causal=True, enable_gqa=True)
+        torch.testing.assert_close(actual, expected, atol=1e-12, rtol=1e-12)
+        adjoint = torch.randn_like(expected)
+        reference = torch.autograd.grad(expected, (q, k, v), adjoint)
+        gradients = torch.autograd.grad(actual, (q, k, v), adjoint)
+        for a, b in zip(gradients, reference):
+            torch.testing.assert_close(a, b, atol=1e-12, rtol=1e-12)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU unavailable')
+def test_gfx1100_native_gqa_compiled_visibility_and_finite_gradients():
+    if not torch.version.hip or torch.cuda.get_device_properties(0).gcnArchName.split(':')[0] != 'gfx1100':
+        pytest.skip('gfx1100-specific execution')
+    torch.cuda.set_per_process_memory_fraction(.4)
+    settings = config('cuda:0', 'bf16-mixed')
+    settings['model'].update(num_hidden_layers=1, hidden_size=128, intermediate_size=256,
+        num_attention_heads=12, num_key_value_heads=4, head_dim=64)
+    runtime = build_runtime(settings, training=True)
+    runtime.configure_training_execution(100000)
+    model = runtime.raw_model
+    batch = collate_shared_group(samples())
+    payload = model.prepare_batch(batch, runtime.device).payload
+    descriptor, keys = model.descriptor(), list(model.state_dict())
+    def logits(p):
+        with torch.autocast('cuda', dtype=torch.bfloat16):
+            return model.causal_lm.lm_head(model._hidden(p, fused=True)[0, p['query_nodes']])
+    base = logits(payload)
+    assert model._training_kernels._gfx1100
+    future = {**payload, 'input_ids': payload['input_ids'].clone()}
+    future['input_ids'][0, 6] = 25
+    torch.testing.assert_close(logits(future)[:5], base[:5], rtol=0, atol=0)
+    other = {**payload, 'input_ids': payload['input_ids'].clone()}
+    other['input_ids'][0, payload['trunk_length']+1] = 55
+    torch.testing.assert_close(logits(other)[3:], base[3:], rtol=0, atol=0)
+    del base
+    runtime.zero_grad()
+    result = runtime.compute(batch, phase='train')
+    runtime.backward(result.loss)
+    runtime.check_gradients()
+    runtime.step()
+    assert all(p.grad is not None and p.grad.dtype == torch.float32
+               and p.grad.is_contiguous() and torch.isfinite(p.grad).all()
+               for p in model.parameters())
+    assert model.descriptor() == descriptor and list(model.state_dict()) == keys
+    assert model.causal_lm.lm_head.weight is model.causal_lm.model.embed_tokens.weight
+    assert model._training_kernels.fallbacks == 0
+    next(model.parameters()).grad.flatten()[0] = float('nan')
+    with pytest.raises(MahjongError, match='NONFINITE_GRADIENT'):
+        runtime.check_gradients()
 
 
 @pytest.mark.parametrize('error,expected', [

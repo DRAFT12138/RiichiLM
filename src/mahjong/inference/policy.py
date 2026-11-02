@@ -148,6 +148,12 @@ class PolicyInference:
         return cls(model, source=source)
 
     @classmethod
+    def from_weights(cls, path, *, device='cpu'):
+        from .weights import load_policy_weights
+        model, source = load_policy_weights(path, device=device)
+        return cls(model, source=source)
+
+    @classmethod
     def from_actor_snapshot(cls, path, *, device='cpu'):
         from .actor_loading import load_actor
         return load_actor(path, device=device)

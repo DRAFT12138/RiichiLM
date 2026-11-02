@@ -25,7 +25,7 @@ def _merged_projections(value, projections):
         tuple(weight.shape[0] for weight in weights), dim=-1)
 
 
-def shared_layer(layer, hidden, cos, sin, trunk_length, allowed):
+def shared_layer(layer, hidden, cos, sin, trunk_length, allowed, native_gqa=False):
     """One differentiable layer, retaining the original segmented SDPA graph."""
     residual = hidden
     normalized = layer.input_layernorm(hidden)
@@ -38,10 +38,15 @@ def shared_layer(layer, hidden, cos, sin, trunk_length, allowed):
     k = attention.k_norm(k).transpose(1, 2)
     v = v.view(shape).transpose(1, 2)
     q, k = apply_rotary_pos_emb(q, k, cos, sin)
-    k, v = (repeat_kv(x, attention.num_key_value_groups) for x in (k, v))
+    if not native_gqa:
+        k, v = (repeat_kv(x, attention.num_key_value_groups) for x in (k, v))
     common = F.scaled_dot_product_attention(q[:, :, :trunk_length],
         k[:, :, :trunk_length], v[:, :, :trunk_length], is_causal=True,
-        dropout_p=0., scale=attention.scaling)
+        dropout_p=0., scale=attention.scaling, enable_gqa=native_gqa)
+    if native_gqa:
+        # Flash consumes the original four KV heads. Only the masked branch
+        # backend needs repeated heads; its backward still reaches original K/V.
+        k, v = (repeat_kv(x, attention.num_key_value_groups) for x in (k, v))
     branches = F.scaled_dot_product_attention(q[:, :, trunk_length:], k, v,
         attn_mask=allowed[None, None], is_causal=False, dropout_p=0.,
         scale=attention.scaling)
@@ -103,12 +108,15 @@ def _original_forward(module):
 
 class SharedTrainingKernels:
     """Ordinary Python object: compiled callables never enter model.state_dict."""
-    def __init__(self):
+    def __init__(self, device=None):
         self.compiled = {}
         self.disabled = False
         self.fallbacks = 0
         # Diagnostic only; never a frozen config or checkpoint field.
         self.layer_enabled = True
+        self._gfx1100 = (device is not None and torch.device(device).type == 'cuda'
+            and bool(torch.version.hip)
+            and torch.cuda.get_device_properties(device).gcnArchName.split(':')[0] == 'gfx1100')
 
     def supports_layer(self, layer):
         if self.disabled or not self.layer_enabled:
@@ -119,17 +127,24 @@ class SharedTrainingKernels:
         return True
 
     def layer(self, layer, hidden, cos, sin, trunk_length, allowed):
+        attention = layer.self_attn
+        native_gqa = (self._gfx1100 and attention.head_dim == 64
+            and attention.q_proj.out_features == 768
+            and attention.k_proj.out_features == attention.v_proj.out_features == 256)
         return self.call('layer', shared_layer, layer, hidden, cos, sin,
-                         trunk_length, allowed)
+                         trunk_length, allowed, native_gqa)
 
     def call(self, name, function, *args):
         if self.disabled:
             return function(*args)
         try:
             if name not in self.compiled:
+                options = {'compile_threads': 2, 'emulate_precision_casts': True}
+                if name == 'layer' and self._gfx1100:
+                    options['reorder_for_locality_in_training'] = True
                 self.compiled[name] = torch.compile(function, backend='inductor',
                     dynamic=True, fullgraph=True,
-                    options={'compile_threads': 2, 'emulate_precision_casts': True})
+                    options=options)
             return self.compiled[name](*args)
         except Exception as error:
             if not _unsupported(error):

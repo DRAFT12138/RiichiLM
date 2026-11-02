@@ -53,6 +53,7 @@ export function Setup({
           ...cp,
           experiment: run.experiment,
           run_id: run.run_id,
+          custom: run.training_type === "Weights",
         })),
       ),
     [catalog],
@@ -64,7 +65,9 @@ export function Setup({
   );
   const selectable = checkpoints.filter((c) => c.selectable);
   const checkpointLabels = useMemo(() => {
-    const base = (cp: (typeof checkpoints)[number]) => `${cp.experiment} · ${t("{step} 步", { step: cp.step.toLocaleString(locale) })} · ${cp.run_id} · ${cp.attempt_id} · ${cp.checkpoint_id}`;
+    const base = (cp: (typeof checkpoints)[number]) => cp.custom
+      ? `${t("自定义权重")} · ${cp.checkpoint_id}`
+      : `${cp.experiment} · ${t("{step} 步", { step: cp.step.toLocaleString(locale) })} · ${cp.run_id} · ${cp.attempt_id} · ${cp.checkpoint_id}`;
     const counts = new Map<string, number>();
     checkpoints.forEach((cp) => counts.set(base(cp), (counts.get(base(cp)) || 0) + 1));
     return new Map(checkpoints.map((cp) => {
@@ -256,7 +259,7 @@ export function Setup({
             {pending ? t("请稍候…") : t("刷新列表")}
           </button>
         </div>
-        {!catalog.runs.length ? (
+        {!catalog.runs.length && !catalog.errors.length ? (
           <div className="empty-library">
             <span className="empty-icon">
               <Bot size={23} />
@@ -267,7 +270,7 @@ export function Setup({
             </div>
             <span className="outline-tag">{t("随机策略可用")}</span>
           </div>
-        ) : (
+        ) : catalog.runs.length ? (
           <>
             <div className="search">
               <Search size={16} />
@@ -279,6 +282,7 @@ export function Setup({
               />
               <button
                 className="text-button"
+                aria-expanded={showRuns}
                 onClick={() => setShowRuns(!showRuns)}
               >
                 {showRuns ? t("收起训练记录") : t("展开训练记录")}
@@ -290,27 +294,28 @@ export function Setup({
               <div className="run-card" key={run.run_id}>
                 <div className="run-heading">
                   <strong>{run.experiment}</strong>
-                  <span>{run.training_type}</span>
-                  <code title={run.created_at || ""}>{run.run_id}</code>
+                  <span>{run.training_type === "Weights" ? t("自定义权重") : run.training_type}</span>
+                  {run.training_type !== "Weights" && <code title={run.created_at || ""}>{run.run_id}</code>}
                 </div>
                 <div className="checkpoint-list">
                   {run.checkpoints.length ? (
                     run.checkpoints.map((cp) => (
                       <div key={cp.id} className="checkpoint">
                         <div>
-                          <b>
+                          {run.training_type !== "Weights" && <b>
                             {cp.step.toLocaleString(locale)} <small>{t("步")}</small>
-                          </b>
+                          </b>}
                           <code>{cp.checkpoint_id}</code>
-                          <small title={cp.attempt_id}>
+                          {run.training_type !== "Weights" && <small title={cp.attempt_id}>
                             Attempt {cp.attempt_id.slice(0, 8)}
-                          </small>
+                          </small>}
                           <small>{t(cp.status)}</small>
                         </div>
                         <div className="assign-buttons">
                           {seatLabels.map((n, i) => (
                             <button
                               className="button subtle"
+                              aria-pressed={seats[i] === cp.id}
                               key={n}
                               disabled={!cp.selectable || configLocked}
                               onClick={() =>
@@ -350,11 +355,10 @@ export function Setup({
               </div>
             ))}
           </>
-        )}
+        ) : null}
         {catalog.errors.length > 0 &&
-          catalog.runs.length > 0 &&
           catalog.errors.map((e, i) => (
-            <p className="inline-error" key={i}>
+            <p className="inline-error" role="alert" key={i}>
               {t(e)}
             </p>
           ))}

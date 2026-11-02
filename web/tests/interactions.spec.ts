@@ -1045,3 +1045,105 @@ test("floating controls fit desktop and mobile without covering hand, rivers or 
     ).toBeLessThanOrEqual(width);
   }
 });
+
+test("table anchors stay fixed as hands and rivers change size", async ({ page }) => {
+  await openFixture(page, snapshot());
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const positions = await page.evaluate(() => {
+      const hand = document.querySelector(".self-hand")!;
+      const info = document.querySelector(".self-info")!;
+      const rivers = [...document.querySelectorAll(".river")];
+      const rect = (element: Element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      const handChildren = [...hand.childNodes];
+      const riverChildren = rivers.map((river) => [...river.childNodes]);
+      const beforeHand = rect(info);
+      while (hand.children.length > 2) hand.lastElementChild!.remove();
+      const afterHand = rect(info);
+      const snapshots = [0, 6, 18, 30].map((count) => {
+        rivers.forEach((river) => {
+          river.replaceChildren(...Array.from({ length: count }, () => document.createElement("span")));
+        });
+        return rivers.map(rect);
+      });
+      hand.replaceChildren(...handChildren);
+      rivers.forEach((river, i) => river.replaceChildren(...riverChildren[i]));
+      return { beforeHand, afterHand, snapshots };
+    });
+    expect(positions.afterHand).toEqual(positions.beforeHand);
+    for (const snapshot of positions.snapshots.slice(1)) {
+      expect(snapshot).toEqual(positions.snapshots[0]);
+    }
+    await expect(page.locator(".round-label")).toBeVisible();
+    await expect(page.locator(".remaining strong")).toBeVisible();
+  }
+});
+
+test("round information stays readable and clear of the rivers in each language", async ({ page }) => {
+  const table = snapshot();
+  table.honba = 12;
+  table.kyotaku = 10;
+  await openFixture(page, table);
+  for (const width of [900, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const locale of ["en", "ja", "zh-CN"]) {
+      await page.locator(".table-tools .language-switcher select").selectOption(locale);
+      await expect(page.locator("html")).toHaveAttribute("lang", locale);
+      const dimensions = await page.evaluate(() => {
+        const center = document.querySelector(".table-center")!.getBoundingClientRect();
+        return [...document.querySelectorAll(".round-label, .round-counters, .dora-label, .dora-tiles, .remaining")].map((element) => {
+          const box = element.getBoundingClientRect();
+          return { left: box.left - center.left, right: center.right - box.right, top: box.top - center.top, bottom: center.bottom - box.bottom, scroll: element.scrollWidth - element.clientWidth };
+        });
+      });
+      for (const box of dimensions) {
+        expect(Math.min(box.left, box.right, box.top, box.bottom), `${width}px ${locale}`).toBeGreaterThanOrEqual(0);
+        expect(box.scroll, `${width}px ${locale}`).toBeLessThanOrEqual(0);
+      }
+      const center = (await page.locator(".table-center").boundingBox())!;
+      for (const river of await page.locator(".river").all()) {
+        const box = (await river.boundingBox())!;
+        const overlaps = center.x < box.x + box.width && center.x + center.width > box.x && center.y < box.y + box.height && center.y + center.height > box.y;
+        expect(overlaps, `${width}px ${locale}: ${await river.getAttribute("class")}`).toBe(false);
+      }
+    }
+  }
+});
+
+test("model library reports catalog failures instead of an empty library", async ({ page }) => {
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    await route.fulfill({ json: path === "/api/bootstrap" ? { token: "fixture", generation: 1, device: "cpu" }
+      : path === "/api/catalog" ? { runs: [], errors: ["catalog unavailable"] } : {} });
+  });
+  await page.goto("/");
+  await expect(page.locator(".library-panel [role=alert]")).toHaveText("catalog unavailable");
+  await expect(page.locator(".empty-library")).toHaveCount(0);
+});
+
+test("model assignments and search remain usable on a narrow screen", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cp = { id: "cp", checkpoint_id: "checkpoint-" + "a".repeat(80), attempt_id: "attempt-" + "b".repeat(80), step: 100, created_at: "", selectable: true, status: "ready" };
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    await route.fulfill({ json: path === "/api/bootstrap" ? { token: "fixture", generation: 1, device: "cpu" }
+      : path === "/api/catalog" ? { runs: [{ run_id: "run-" + "c".repeat(80), experiment: "experiment", created_at: "", training_type: "NTP", checkpoints: [cp], attempts: [], errors: [] }], errors: [] } : {} });
+  });
+  await page.goto("/");
+  const search = page.getByRole("textbox", { name: "搜索模型和训练记录" });
+  await search.focus();
+  await expect(page.locator(".search")).toHaveCSS("border-color", "rgb(37, 142, 131)");
+  const assign = page.getByRole("button", { name: "选为下家" });
+  await expect(assign).toHaveAttribute("aria-pressed", "false");
+  await assign.click();
+  await expect(assign).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#opponent-0")).toHaveValue("cp");
+  const toggle = page.getByRole("button", { name: "展开训练记录" });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect(page.getByRole("button", { name: "收起训练记录" })).toHaveAttribute("aria-expanded", "true");
+  expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(390);
+});

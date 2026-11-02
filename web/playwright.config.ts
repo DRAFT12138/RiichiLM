@@ -14,7 +14,7 @@ export default defineConfig({
       : {},
   },
   webServer: {
-    command: `cd .. && CUDA_VISIBLE_DEVICES="" HIP_VISIBLE_DEVICES="" ROCR_VISIBLE_DEVICES="" "${python}" -m mahjong web-play --models-root /tmp/mahjong-web-e2e-no-models --port ${port} --lease-seconds 120`,
+    command: `cd .. && CUDA_VISIBLE_DEVICES="" HIP_VISIBLE_DEVICES="" ROCR_VISIBLE_DEVICES="" "${python}" -m mahjong web-play --models-root /tmp/mahjong-web-e2e-no-models --weights-root /tmp/mahjong-web-e2e-no-weights --port ${port} --lease-seconds 120`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
     timeout: 30000,

@@ -116,6 +116,8 @@ Build the frontend with Node.js 20.19+ or 22.12+, then start the local server:
 
 Open the printed loopback URL. Start with random opponents; no data, model download, or API key is needed. Once built, production serving needs only Python. The server is intended for local use. Games live in the current session; refreshing or exiting starts over.
 
+For custom Qwen3 policy weights, place `.pt` or `.pth` files directly in `weights/` and refresh the model list, or pass `--weights-root /path/to/weights`. This entry accepts training `state.pt`, inference exports and plain state dictionaries without run metadata, training data or fingerprint checks; model tensors must fit the network. Plain state dictionaries default to the current v2 input, 8,192-token context and RoPE theta 1,000,000; override these with a same-stem `.json` model configuration. Export a smaller file without optimizer or recovery state using `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt`; tensor precision and the original file are preserved.
+
 To add external LLM players, create a local JSON configuration using this structure, then add `--llm-config /path/to/players.json` to `web-play`:
 
 ```json

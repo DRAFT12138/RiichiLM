@@ -24,6 +24,9 @@ def parser():
     evaluation.add_argument('overrides', nargs='*', metavar='key=value')
     inspection = commands.add_parser('inspect', help='只读查看当前 attempt、终态和可恢复状态')
     inspection.add_argument('--run', required=True, help='run 目录')
+    export = commands.add_parser('export-weights', help='从训练 .pt 导出精简推理权重，保留原精度')
+    export.add_argument('--checkpoint', required=True, help='源 state.pt 文件')
+    export.add_argument('--output', required=True, help='新推理 .pt 文件，不覆盖已有文件')
     rl = commands.add_parser('rl', help='有界 RL 训练、恢复及纯 Actor 配对评测')
     modes = rl.add_subparsers(dest='rl_command', required=True)
     new = modes.add_parser('train', help='从兼容 NTP checkpoint 初始化独立 RL 实验')
@@ -45,6 +48,7 @@ def parser():
         entry.add_argument('overrides', nargs='*', metavar='rl.key=value')
     web = commands.add_parser('web-play', help='本机 React 真人对战；退出后重新开局')
     web.add_argument('--models-root', default='outputs')
+    web.add_argument('--weights-root', default='weights', help='自定义 .pt/.pth 权重目录，无需训练 run 元数据')
     web.add_argument('--device', choices=('cpu', 'cuda:0'), default='cpu')
     web.add_argument('--port', type=int, default=8765)
     web.add_argument('--lease-seconds', type=float, default=30)
@@ -74,10 +78,15 @@ def main(argv=None):
         command_parser = parser()
         options, trailing = command_parser.parse_known_args(arguments)
         if trailing:
-            if options.command in ('inspect', 'web-play', 'arena-evaluate') or (options.command == 'rl' and options.rl_command == 'resume') or any(token.startswith('-') or '=' not in token for token in trailing):
+            if options.command in ('inspect', 'web-play', 'arena-evaluate', 'export-weights') or (options.command == 'rl' and options.rl_command == 'resume') or any(token.startswith('-') or '=' not in token for token in trailing):
                 command_parser.error('unrecognized arguments: ' + ' '.join(trailing))
             options.overrides.extend(trailing)
         try:
+            if options.command == 'export-weights':
+                from mahjong.inference.weights import export_policy_weights
+                path = export_policy_weights(options.checkpoint, options.output)
+                print(f'weights={path} bytes={path.stat().st_size}', flush=True)
+                return 0
             if options.command == 'arena-evaluate':
                 from mahjong.arena.evaluation import evaluate_cli
                 return evaluate_cli(options, cancel=stop.requested)

@@ -116,6 +116,8 @@ uv pip install --python .venv/bin/python --no-deps outputs/wheels/riichienv-*.wh
 
 打开终端打印的本机地址，选择随机对手即可开始，无需数据、模型下载或 API 密钥。构建完成后，生产服务只需 Python。服务用于本机访问；对局只保留在当前会话中，刷新或退出后重新开始。
 
+自定义 Qwen3 策略权重：将 `.pt`／`.pth` 直接放入 `weights/` 并刷新模型列表，或传入 `--weights-root /path/to/weights`。支持训练 `state.pt`、精简推理文件和裸 `state_dict`，不要求 run 元数据、训练数据或指纹一致；模型张量须与网络结构相容。裸权重默认当前 v2 输入、8192 token 和 RoPE theta 1000000，可通过同名 `.json` 模型配置覆盖。使用 `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` 去掉优化器及恢复状态，保留张量精度和原文件。
+
 外接 LLM：自行创建以下结构的 JSON 配置，在 `web-play` 后追加 `--llm-config /path/to/players.json`：
 
 ```json

@@ -45,24 +45,27 @@ class TableEngine:
                 continue
             key = (item["path"], item["manifest_hash"])
             if key not in cache:
-                policy = PolicyInference.from_checkpoint(item["path"], device=device)
-                actual = policy.source
-                if (
-                    any(
-                        actual[k] != item[k]
-                        for k in (
-                            "run_id",
-                            "checkpoint_id",
-                            "attempt_id",
-                            "manifest_hash",
+                if item.get("kind") == "weights":
+                    policy = PolicyInference.from_weights(item["path"], device=device)
+                else:
+                    policy = PolicyInference.from_checkpoint(item["path"], device=device)
+                    actual = policy.source
+                    if (
+                        any(
+                            actual[k] != item[k]
+                            for k in (
+                                "run_id",
+                                "checkpoint_id",
+                                "attempt_id",
+                                "manifest_hash",
+                            )
                         )
-                    )
-                    or actual["global_step"] != item["step"]
-                ):
-                    raise MahjongError(
-                        "CHECKPOINT_INVALID", "实际加载发布物与选择不一致，请刷新重选"
-                    )
-                policy.verify_training_profile(training_profile)
+                        or actual["global_step"] != item["step"]
+                    ):
+                        raise MahjongError(
+                            "CHECKPOINT_INVALID", "实际加载发布物与选择不一致，请刷新重选"
+                        )
+                    policy.verify_training_profile(training_profile)
                 cache[key] = policy
             controllers.append(("model", cache[key]))
             seat = len(controllers) - 1

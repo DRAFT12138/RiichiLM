@@ -16,9 +16,9 @@ STATIC = Path(__file__).parent / "static"
 
 
 def create_app(
-    *, models_root="outputs", device="cpu", port=8765, dev_origin=None, **timeouts
+    *, models_root="outputs", weights_root="weights", device="cpu", port=8765, dev_origin=None, **timeouts
 ):
-    session = Session(models_root, device=device, **timeouts)
+    session = Session(models_root, weights_root=weights_root, device=device, **timeouts)
     token = secrets.token_urlsafe(32)
     allowed = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     if dev_origin is not None:
@@ -160,6 +160,7 @@ def serve(options):
 
     app = create_app(
         models_root=options.models_root,
+        weights_root=options.weights_root,
         device=options.device,
         port=options.port,
         dev_origin=options.dev_origin,

@@ -3430,3 +3430,61 @@ html[lang="en"] .opponent-seat .seat-info small { max-width: 180px; overflow: hi
   .spectator-notes-button span { display: none; }
 }
 html[lang="en"] .opponent-top strong { letter-spacing: 0; }
+
+/* Keep seat and river anchors stable as tiles are called or discarded. */
+.self-seat {
+  width: calc(var(--hand-size) * 14 + 66px);
+}
+.self-hand {
+  min-height: calc(var(--hand-size) * 1.36);
+}
+.river {
+  height: calc((var(--river-size) * 1.36 + 3px) * 4 - 3px);
+}
+
+/* Give the round, counters and remaining tiles a clear visual hierarchy. */
+.table-center { padding: 12px 10px 10px; }
+.round-label { font-size: 26px; line-height: 1.2; letter-spacing: 2px; font-weight: 700; }
+.round-counters { gap: 12px; margin-top: 6px; font-size: 12px; color: #e3f1e8; }
+.dora-label { margin: 8px 0 5px; font-size: 10px; letter-spacing: 1px; color: #d1e6dd; }
+.remaining { margin-top: 6px; font-size: 11px; color: #d1e6dd; }
+.remaining strong { font-size: 23px; font-weight: 700; }
+@media (max-width: 720px) {
+  .self-seat { width: calc(var(--hand-size) * 14 + 32px); }
+  .river { height: calc((var(--river-size) * 1.36 + 2px) * 4 - 2px); }
+  .table-center { padding: 10px 5px 8px; }
+  .round-label { font-size: 20px; letter-spacing: 1px; }
+  .round-counters { gap: 6px; margin-top: 5px; font-size: 10px; }
+  .dora-label { margin: 6px 0 4px; font-size: 9px; letter-spacing: 0; }
+  .remaining { margin-top: 4px; font-size: 10px; }
+  .remaining strong { font-size: 19px; }
+}
+
+/* Preserve legibility for compass winds and longer English labels. */
+.center-compass { color: #b9d6c9; }
+.center-compass span:nth-child(4) { color: #ffe0a1; }
+html[lang="en"] .round-counters { font-size: 11px; }
+@media (max-width: 720px) {
+  html[lang="en"] .round-counters { font-size: 10px; }
+  html[lang="en"] .dora-label { font-size: 9px; }
+}
+
+/* Make library controls, long identifiers and table status easier to scan. */
+.search:focus-within { border-color: #258e83; box-shadow: 0 0 0 3px #258e8329; }
+.library-panel .button.subtle[aria-pressed="true"] { color: #fff; background: #337f77; border-color: #286b64; }
+.library-panel .run-heading, .library-panel .checkpoint > div, .library-panel .attempt { min-width: 0; }
+.library-panel :is(.run-heading, .checkpoint, .attempt) :is(code, strong, small) { overflow-wrap: anywhere; }
+.library-panel .inline-error { color: #9a3e3e; font-size: 12px; line-height: 1.5; }
+.page-footer a { color: #367d75; text-decoration: underline; }
+.table-help { max-height: min(70svh, 560px); overflow-y: auto; }
+.compact-seat-score span:first-child { color: #d0e6dc; }
+@media (max-width: 720px) {
+  .search { flex-wrap: wrap; }
+  .search input { flex-basis: calc(100% - 28px); min-height: 36px; font-size: 14px; }
+  .search .text-button { min-height: 40px; font-size: 11px; margin-left: auto; }
+  .assign-buttons { flex-wrap: wrap; }
+  .assign-buttons .button { min-height: 40px; }
+  .compact-seat-score span:first-child { font-size: 10px; }
+  .error-banner { flex-wrap: wrap; }
+  .error-banner > span { flex: 1 1 200px; overflow-wrap: anywhere; }
+}

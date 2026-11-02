@@ -306,7 +306,7 @@ export function Game({
           </div>
           <LoaderCircle className="spin" size={24} />
           <h2>{t("好牌，值得等一等。")}</h2>
-          <p>{t("正在校验并加载你的对手，准备这场对局。")}</p>
+          <p role="status">{t("正在校验并加载你的对手，准备这场对局。")}</p>
           <button className="text-button" disabled={pending} onClick={() => void onExit()}>
             {t("取消并返回")}</button>
         </div>

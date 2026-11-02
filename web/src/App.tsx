@@ -289,7 +289,7 @@ export function App() {
                 onClick={() =>
                   document
                     .querySelector(".library-panel")
-                    ?.scrollIntoView({ behavior: "smooth" })
+                    ?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })
                 }
               >
                 {t("模型与训练")}<ArrowUpRight size={14} />

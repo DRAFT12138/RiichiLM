@@ -32,6 +32,7 @@ class Session:
         self,
         models_root,
         *,
+        weights_root=None,
         device="cpu",
         lease_seconds=30,
         load_timeout=300,
@@ -44,7 +45,7 @@ class Session:
                 raise MahjongError("CONFIG_INVALID", "超时参数必须为有限正数")
         if device not in ("cpu", "cuda:0"):
             raise MahjongError("CONFIG_INVALID", "不支持的设备")
-        self.catalog = Catalog(models_root)
+        self.catalog = Catalog(models_root, weights_root=weights_root)
         self.llm_configs = load_llm_configs(llm_config)
         self.device, self.lease_seconds = device, lease_seconds
         self.load_timeout, self.decision_timeout = load_timeout, decision_timeout
