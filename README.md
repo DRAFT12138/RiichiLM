@@ -4,7 +4,7 @@
 
 # RiichiLM
 
-[Official website · www.riichilm.top](https://www.riichilm.top)
+[Official website · www.riichilm.top](https://www.riichilm.top) · [Homepage source and hosting guide](homepage/README.md)
 
 **Teaching Machines to Play Riichi Mahjong with LLMs and RL**
 
