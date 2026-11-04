@@ -29,3 +29,10 @@ Source: https://github.com/FluffyStuff/riichi-mahjong-tiles
 Snapshot: 26e127ba2117f45cdce5ea0225748cc0cfad3169
 Public domain / CC0 1.0. The upstream dedication and source notes are retained in
 web/src/assets/tiles/. The artwork is bundled locally with the browser client.
+
+Interface presentation
+----------------------
+Character and salon illustrations are original AI-generated assets bundled
+locally. Source and usage notes: web/src/assets/illustrations/SOURCE.md.
+Browser sound cues are original synthesized sequences; no third-party music
+or voice recordings are included.

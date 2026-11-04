@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:ui": "npm run build && playwright test --config playwright.ui.config.ts"
   },
   "dependencies": {
     "react": "19.2.4",

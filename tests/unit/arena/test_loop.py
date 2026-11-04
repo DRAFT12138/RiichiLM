@@ -168,6 +168,8 @@ def test_cli_weights_share_web_execution_and_deduplicate_paths(weights, tmp_path
     def checked_match(bridge, players, **kwargs):
         a, b = players[:2]
         assert a.policy is b.policy
+        assert a.memory_budget is b.memory_budget
+        assert a.prefix_cache is not b.prefix_cache
         assert a.generator is not b.generator
         assert a.generator.initial_seed() != b.generator.initial_seed()
         assert policy_precision(a.policy.model) == ('bf16-mixed' if device == 'cuda:0' else '32-true')
@@ -185,6 +187,9 @@ def test_cli_weights_share_web_execution_and_deduplicate_paths(weights, tmp_path
     assert len(seen) == 2 and seen[0] is seen[1]
     report = json.loads(output.read_text())
     assert report['failed_matches'] == 0 and report['completed_seed_groups'] == 2
+    assert report['gpu_memory']['requested_gib'] == 16
+    assert all(sum(c['hits'] for c in match['prefix_cache'] if c is not None) > 0
+               for match in report['outcomes'])
     assert report['players'][0] == report['players'][1]
     assert report['players'][0]['source_kind'] == 'weights'
     summary, = report['model_summaries']

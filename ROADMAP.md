@@ -2,45 +2,39 @@
 
 # Roadmap
 
-This roadmap starts a new public-facing baseline for RiichiLM. It describes capabilities and verifiable next steps, rather than private experiments or historical training schedules. Priorities can change; there are no promised release dates or playing-strength claims.
+RiichiLM's current capabilities and next priorities. Priorities may change; playing strength and long-run training quality require separate evaluation.
 
-## Available in the codebase
+## Available
 
-- [x] Mahjong tokenizer, legal-action trie, Qwen3-based policies, and Rust-backed rules.
-- [x] Action-token supervised training, shared-context training, and checkpoint recovery.
+- [x] Mahjong tokenizer, legal-action trie, Qwen3 policies, and Rust rules engine.
+- [x] Action-token supervision, shared-context training, and full checkpoint recovery.
 - [x] Self-play collection, Oracle Critic, KL-anchored PPO, frozen-opponent pool, and RL round-boundary recovery.
-- [x] Local human-vs-AI play and four-AI spectating with independently selected NTP, external LLM, and random players.
-- [x] English, Chinese, and Japanese interfaces and project documentation.
+- [x] Human-vs-AI play, four-AI spectating, and headless matches with local NTP checkpoints, custom weights, external LLMs, or random players.
+- [x] English, Chinese, and Japanese interfaces and documentation; public repository and CI.
 
-These items describe implementation. Competitive strength and long-run quality remain separate evaluation tasks.
+These items describe implementation. Recorded CPU/browser and AMD GPU checks have their own scope; independent CUDA runtime validation remains open.
 
-## 1. A reproducible public release
+## Coming soon: pretrained weights
 
-- [x] Finalize an explicit file allowlist covering the model, training interfaces, RL, generic runtime/data components, Web, selected tests, and required resources.
-- [x] Make public CLI/configuration/dependency references self-contained. Make the current Nanikiru evaluation input independently configurable so an unbundled private evaluation set is not an implicit requirement.
-- [x] Document the user-supplied corpus contract and checkpoint prerequisites in the three README translations. Keep source-specific parsers and processing private.
-- [x] Run installation and meaningful regression from the exported tree, using the existing dependency environment without importing private source. Cover model construction, random Actor round trips, full game collection, PPO updates, saving, and recovery in a new process.
-- [x] Create the separate public repository with independent Git history and public CI.
-- [x] Provide a private-side, manually invoked synchronization script with preview, explicit file management, conflict handling, and repeatable exports. No automatic synchronization or force push.
+**Pretrained weights are coming soon as an open-source release.**
 
-Hosted CI execution and CUDA runtime validation remain separate from the completed local CPU/browser checks.
+- [ ] Publish pretrained weights with download links, the weights license, model configuration, and loading instructions.
+- [ ] Verify the published artifact with the documented Web and headless inference commands.
 
-## 2. Better experimentation
+The [README](README.md) will announce availability. Training and evaluation datasets remain outside the release. Inference weights alone do not provide the optimizer, RNG, data cursor, and compatible corpus required for full training recovery.
 
-- [ ] Add training-health observability for gradients, activations, actual parameter updates, KL, entropy, and Critic/advantage behavior; measure its overhead.
-- [ ] Evaluate long-run shared-context throughput and numerical behavior using contributor-provided inputs and reproducible synthetic cases.
-- [ ] Broaden independent CUDA installation/runtime validation and native-build coverage; keep platform-specific evidence explicit.
-- [ ] Measure real-model Web latency and memory; investigate RL Actor support in the arena without weakening loading or observation boundaries.
-- [ ] Improve three-language terminology, accessibility, and narrow-screen layouts as the interface evolves.
+## Experimentation and evaluation
 
-## 3. Research and evaluation
+- [ ] Add training-health metrics for gradients, activations, actual parameter updates, KL, entropy, and Critic/advantage behavior; measure overhead.
+- [ ] Evaluate long-run shared-context throughput, numerical behavior, and training quality with reproducible inputs.
+- [ ] Broaden independent CUDA installation/runtime validation and native-build coverage.
+- [ ] Measure Web model latency and memory across workloads; investigate RL Actor support in the arena.
+- [ ] Improve three-language terminology, accessibility, and narrow-screen layouts.
+- [ ] Run controlled Oracle/PPO/KL ablations, sustained self-play, and frozen-pool promotion/turnover evaluations.
+- [ ] Report seat-rotated comparisons, uncertainty, compute cost, and reproducible evaluation procedures.
 
-- [ ] Run controlled Oracle/PPO/KL ablations and longer self-play experiments.
-- [ ] Evaluate frozen-pool turnover, candidate promotion, and quality gates over sustained runs.
-- [ ] Report seat-rotated comparisons, uncertainty, compute cost, and reproducible evaluation procedures. Do not infer strength from a smoke test or a loss curve.
+## Distribution
 
-## Distribution boundary
-
-Learning and research only. We will not distribute training datasets, evaluation datasets, pretrained models, trained checkpoints, or private game records. Use your own compatible inputs. Public documentation consists of the README, ROADMAP, and CONTRIBUTING families in English, Chinese, and Japanese, plus necessary license/attribution material and referenced visual assets. Repository skills, AGENTS.md, internal designs, project memory, acceptance evidence, archives, private processing code, secrets, and private Git history stay out of the public export.
+For learning and research. Training datasets, evaluation datasets, and private game records are not distributed. The upcoming weights release will specify its own license; the code remains Apache-2.0. Use compatible, appropriately licensed inputs for training.
 
 [Get started](README.md) · [Contribute](CONTRIBUTING.md)

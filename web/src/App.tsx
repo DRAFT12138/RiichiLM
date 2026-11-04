@@ -6,6 +6,7 @@ import type { Candidate, Catalog, Mode, Table, SpectatorControl, SetupConfig } f
 import { Setup } from "./Setup";
 import { Game } from "./Game";
 import { randomCast } from "./cast";
+import { SoundControl } from "./sound";
 const invalidPage = (error: unknown) => error instanceof api.ApiError &&
   (error.status === 403 || (error.status === 409 && error.code === "STALE_DECISION" && error.message === "页面已失效，请刷新并重新开局"));
 export function App() {
@@ -279,6 +280,7 @@ export function App() {
             </a>
             <span className="header-place">{t("对局大厅")}</span>
             <div className="topbar-status">
+              <SoundControl />
               <LanguageSwitcher />
               <span className="device-pill">
                 <CircleDot size={13} />

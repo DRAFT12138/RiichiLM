@@ -12,11 +12,12 @@ from mahjong.arena.bridge import ArenaDecisionBridge as WebDecisionBridge, profi
 from mahjong.arena.llm import LLMConfig, LLMPlayer, plain
 from mahjong.arena.loop import DecisionLoop
 from mahjong.arena.players import ModelPlayer, RandomPlayer, load_model_policy
+from mahjong.arena.memory import ModelMemoryBudget
 
 
 class TableEngine:
     def __init__(
-        self, config, *, device="cpu", decision_timeout=120, emit=lambda _: None
+        self, config, *, device="cpu", gpu_memory_gib=16., decision_timeout=120, emit=lambda _: None
     ):
         self.config, self.emit = config, emit
         self.mode = config["mode"]
@@ -24,6 +25,7 @@ class TableEngine:
         self.viewer, self.paused, self.playback_interval = 0, False, 0.75
         self.decision_notes, self.pending_notes = deque(maxlen=64), []
         self.decision_timeout = decision_timeout
+        self.memory_budget = ModelMemoryBudget(device, gpu_memory_gib)
         self.timings = dict(
             load_seconds=0.0, last_decision_seconds=None, peak_rss_mib=0.0
         )
@@ -45,7 +47,7 @@ class TableEngine:
             key = (item["path"], item["manifest_hash"])
             if key not in cache:
                 kind = 'weights' if item.get('kind') == 'weights' else 'checkpoint'
-                policy = load_model_policy(item['path'], kind=kind, device=device)
+                policy = load_model_policy(item['path'], kind=kind, device=device, memory_budget=self.memory_budget)
                 if kind == 'checkpoint':
                     actual = policy.source
                     if (
@@ -68,7 +70,7 @@ class TableEngine:
             controllers.append(("model", cache[key]))
             seat = len(controllers) - 1
             seed = int.from_bytes(hashlib.sha256(f"web-play/model-sampling/v1:{config['seed']}:{seat}".encode()).digest()[:8], "big")
-            players.append(ModelPlayer(cache[key], seed=seed))
+            players.append(ModelPlayer(cache[key], seed=seed, memory_budget=self.memory_budget))
         self.controllers = controllers
         self.bridge = WebDecisionBridge(
             profile_for(self.mode), model_binding_digest="web-non-model"
@@ -128,6 +130,7 @@ class TableEngine:
         table.update(
             state=self.status, mode=self.mode, thinking=thinking,
             timings=dict(self.timings), controllers=controllers, opponents=controllers[1:],
+            gpu_memory=self.memory_budget.snapshot(),
             spectator=self.spectator, viewer=self.viewer, paused=self.paused,
             playback_interval=self.playback_interval,
             decision_notes=[dict(n) for n in self.decision_notes if n["seat"] == self.viewer] if self.spectator else [],
@@ -247,6 +250,7 @@ def run_worker(connection, config, device, decision_timeout):
         engine = TableEngine(
             config,
             device=device,
+            gpu_memory_gib=config.get('gpu_memory_gib', 16.),
             decision_timeout=decision_timeout,
             emit=connection.send,
         )

@@ -243,19 +243,25 @@ class PolicyInference:
         previous = self._prepared.get(view.key)
         if previous is not None and (previous != request or self._views[view.key] != view):
             fail('STALE_DECISION', 'same key cannot bind different content')
-        # Only the most recent window is retained; no histories or KV survive it.
+        # Only prepared requests in the most recent window are retained here.
         self._prepared = {k: v for k, v in self._prepared.items() if k.window == view.key.window}
         self._prepared[view.key] = request
         self._views = {k: v for k, v in self._views.items() if k.window == view.key.window}
         self._views[view.key] = view
         return request
 
-    def generate(self, request, *, options=DecodeOptions(), cancel=None, deadline_monotonic=None, generator=None):
+    def generate(self, request, *, options=DecodeOptions(), cancel=None, deadline_monotonic=None, generator=None,
+                 prefix_cache=None):
         from mahjong.policy.execution import policy_execution
+        from .prefix_cache import incremental_attention, GPU_PREFILL_CHUNK_TOKENS
         def check():
             if cancel is not None and cancel():
+                if prefix_cache is not None:
+                    prefix_cache.clear()
                 fail('CANCELLED', 'decision cancelled')
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if prefix_cache is not None:
+                    prefix_cache.clear()
                 fail('DEADLINE_EXCEEDED', 'decision deadline exceeded')
         check()
         if (options.strategy not in ('greedy', 'categorical') or type(options.use_kv_cache) is not bool
@@ -269,6 +275,7 @@ class PolicyInference:
         prefix = request.prefix_ids
         generated, logprobs = [], []
         cache = out = kwargs = None
+        success = False
         try:
             with torch.inference_mode(), policy_execution(self.model):
                 for offset in range(limit):
@@ -282,18 +289,36 @@ class PolicyInference:
                             torch.multinomial(torch.ones(1), 1, generator=generator)
                         logprobs.append(0.)
                     else:
+                        reused = 0
+                        if offset == 0 and prefix_cache is not None and options.use_kv_cache:
+                            cache, reused = prefix_cache.take(self, request)
                         ids = (prefix + tuple(generated) if not options.use_kv_cache or offset == 0
                                else (generated[-1],))
+                        if reused:
+                            ids = ids[reused:]
                         length = len(prefix) + offset
-                        kwargs = dict(input_ids=torch.tensor([ids], device=self.device),
-                            attention_mask=torch.ones((1, length), dtype=torch.int64, device=self.device),
-                            position_ids=torch.arange(length-len(ids), length, device=self.device)[None],
-                            use_cache=options.use_kv_cache, logits_to_keep=1, return_dict=True)
-                        if cache is not None and options.use_kv_cache:
-                            kwargs['past_key_values'] = cache
-                        out = self.lm(**kwargs)
-                        cache = out.past_key_values if options.use_kv_cache else None
-                        check()
+                        gpu_prefix = bool(prefix_cache is not None and options.use_kv_cache
+                                          and self.device.type == 'cuda' and torch.is_autocast_enabled('cuda'))
+                        # Bound transient prefill allocations without removing
+                        # history. Every chunk keeps its absolute RoPE positions.
+                        chunk_size = GPU_PREFILL_CHUNK_TOKENS if gpu_prefix else len(ids)
+                        for start in range(0, len(ids), chunk_size):
+                            check()
+                            chunk = ids[start:start + chunk_size]
+                            end = length - len(ids) + start + len(chunk)
+                            kwargs = dict(input_ids=torch.tensor([chunk], device=self.device),
+                                attention_mask=torch.ones((1, end), dtype=torch.int64, device=self.device),
+                                position_ids=torch.arange(end-len(chunk), end, device=self.device)[None],
+                                use_cache=options.use_kv_cache, logits_to_keep=1, return_dict=True)
+                            if cache is not None and options.use_kv_cache:
+                                kwargs['past_key_values'] = cache
+                            aligned = bool(gpu_prefix and cache is not None and len(chunk) > 1)
+                            if aligned:
+                                kwargs['attention_mask'] = {'full_attention': None}
+                            with incremental_attention(self.lm, aligned):
+                                out = self.lm(**kwargs)
+                            cache = out.past_key_values if options.use_kv_cache else None
+                            check()
                         logits = out.logits[0, -1].float()
                         if not allowed or not bool(torch.isfinite(logits[allowed]).all()):
                             fail('NONFINITE_LOGITS', 'empty successors or nonfinite legal logits')
@@ -321,6 +346,9 @@ class PolicyInference:
                             options.strategy, math.fsum(logprobs) if options.strategy == 'categorical' else 0.,
                             None if self.source is None else deepcopy(self.source.get('actor_ref')))
                         check()
+                        if prefix_cache is not None and options.use_kv_cache:
+                            prefix_cache.put(self, request, cache)
+                        success = True
                         return result
                 fail('INCOMPLETE_GENERATION', 'legal depth exceeded')
         except RuntimeError as exc:
@@ -329,5 +357,6 @@ class PolicyInference:
             fail('MODEL_EXECUTION_FAILED', f'model forward failed: {exc}',
                  decision_key=asdict(request.key), stage='forward')
         finally:
-            # Cache is local even on cancellation, numeric error or model exception.
+            if not success and prefix_cache is not None:
+                prefix_cache.clear()
             cache = out = kwargs = None

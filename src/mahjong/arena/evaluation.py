@@ -61,6 +61,7 @@ def evaluate_cli(options, *, cancel=None):
     from .bridge import ArenaDecisionBridge, profile_for
     from mahjong.inference.policy import digest
     from mahjong.policy.execution import policy_precision
+    from .memory import ModelMemoryBudget
 
     if (not math.isfinite(options.decision_timeout) or options.decision_timeout <= 0
             or options.max_windows <= 0 or len(set(options.seeds)) != len(options.seeds)
@@ -69,6 +70,7 @@ def evaluate_cli(options, *, cancel=None):
     output = Path(options.output)
     if output.exists():
         raise MahjongError("CONFIG_INVALID", "评估报告已存在，请使用新路径")
+    memory_budget = ModelMemoryBudget(options.device, getattr(options, 'gpu_memory_gib', 16.))
     configs, policies, identities = load_llm_configs(options.llm_config), {}, []
     sources, source_identities = {}, {}
     for spec in options.players:
@@ -85,7 +87,7 @@ def evaluate_cli(options, *, cancel=None):
             path = Path(path).resolve()
             key = (kind, str(path))
             if key not in sources:
-                policy = load_model_policy(path, kind=kind, device=options.device)
+                policy = load_model_policy(path, kind=kind, device=options.device, memory_budget=memory_budget)
                 if kind == 'checkpoint':
                     policy.verify_training_profile(profile_for("hanchan"))
                     source = policy.source
@@ -119,7 +121,7 @@ def evaluate_cli(options, *, cancel=None):
                     controllers.append(("llm", None))
                 else:
                     derived = int.from_bytes(hashlib.sha256(f"arena/model-sampling/v1:{seed}:{seat}".encode()).digest()[:8], "big")
-                    players.append(ModelPlayer(policies[spec], seed=derived))
+                    players.append(ModelPlayer(policies[spec], seed=derived, memory_budget=memory_budget))
                     controllers.append(("model", policies[spec]))
             bridge = ArenaDecisionBridge(profile_for(options.mode), model_binding_digest="arena-non-model")
             bridge.bind_controllers(controllers)
@@ -128,6 +130,7 @@ def evaluate_cli(options, *, cancel=None):
                                 decision_timeout=options.decision_timeout,
                                 max_windows=options.max_windows, cancel=cancel)
             outcome.update(rotation=rotation, player_indices=order,
+                           prefix_cache=[p.prefix_cache.snapshot() if isinstance(p, ModelPlayer) else None for p in players],
                            model_sampling_seeds=[p.generator.initial_seed() if isinstance(p, ModelPlayer) else None for p in players])
             outcomes.append(outcome)
             print(f"seed={seed} rotation={rotation} {outcome['status']} windows={outcome['windows']} scores={outcome['scores']}", flush=True)
@@ -157,6 +160,7 @@ def evaluate_cli(options, *, cancel=None):
                   max_windows=options.max_windows, outcomes=outcomes, seed_groups=groups,
                   completed_seed_groups=len(groups), failed_matches=sum(o["status"] != "complete" for o in outcomes),
                   model_sampling="categorical", strength_claim=False,
+                  gpu_memory=memory_budget.snapshot(),
                   model_summaries=model_summaries(identities, outcomes, groups,
                                                  profile_for(options.mode)['initial_scores']))
     output.parent.mkdir(parents=True, exist_ok=True)

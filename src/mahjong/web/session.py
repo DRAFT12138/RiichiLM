@@ -13,6 +13,7 @@ import uuid
 
 from mahjong.contracts import MahjongError
 from mahjong.arena.llm import load_llm_configs
+from mahjong.arena.memory import validate_gpu_memory_gib
 from .catalog import Catalog
 
 
@@ -34,6 +35,7 @@ class Session:
         *,
         weights_root=None,
         device="cpu",
+        gpu_memory_gib=16.,
         lease_seconds=30,
         load_timeout=300,
         decision_timeout=120,
@@ -45,6 +47,7 @@ class Session:
                 raise MahjongError("CONFIG_INVALID", "超时参数必须为有限正数")
         if device not in ("cpu", "cuda:0"):
             raise MahjongError("CONFIG_INVALID", "不支持的设备")
+        self.gpu_memory_gib = validate_gpu_memory_gib(gpu_memory_gib)
         self.catalog = Catalog(models_root, weights_root=weights_root)
         self.llm_configs = load_llm_configs(llm_config)
         self.device, self.lease_seconds = device, lease_seconds
@@ -73,6 +76,7 @@ class Session:
             return dict(
                 generation=self.generation,
                 device=self.device,
+                gpu_memory_gib=self.gpu_memory_gib,
                 lease_seconds=self.lease_seconds,
             )
 
@@ -164,7 +168,8 @@ class Session:
                     raise MahjongError("CONFIG_INVALID", "LLM 策略未配置，请检查服务启动参数")
                 else:
                     resolved.append(self.catalog.resolve(item))
-            config = dict(mode=mode, opponents=resolved, spectator=spectator, seed=secrets.randbits(32))
+            config = dict(mode=mode, opponents=resolved, spectator=spectator, seed=secrets.randbits(32),
+                          gpu_memory_gib=self.gpu_memory_gib)
             context = multiprocessing.get_context("spawn")
             parent, child = context.Pipe()
             process = context.Process(

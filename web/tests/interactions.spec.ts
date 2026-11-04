@@ -1147,3 +1147,140 @@ test("model assignments and search remain usable on a narrow screen", async ({ p
   await expect(page.getByRole("button", { name: "收起训练记录" })).toHaveAttribute("aria-expanded", "true");
   expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+test("sound is opt-in, adjustable and persists across reloads", async ({ page }) => {
+  await openFixture(page, snapshot());
+  await expect(page.getByRole("button", { name: "开启音效", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "开启音效", exact: true }).click();
+  await expect(page.getByRole("button", { name: "关闭音效", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "音量设置", exact: true }).click();
+  await page.getByRole("slider", { name: "音效音量", exact: true }).fill("0.2");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "关闭音效", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "音量设置", exact: true }).click();
+  await expect(page.getByRole("slider", { name: "音效音量", exact: true })).toHaveValue("0.2");
+  await page.getByRole("button", { name: "关闭音效", exact: true }).click();
+  await expect(page.getByRole("button", { name: "开启音效", exact: true })).toBeVisible();
+});
+
+test("illustrated result keeps scores and actions reachable at desktop and phone sizes", async ({ page }) => {
+  const table = snapshot([]);
+  table.state = "round_result";
+  table.result = { round_id: 0, revision: 1, kind: "win", reason: null, winners: [{ actor: 0, target: 1, tsumo: false,
+    hand: ["1m", "2m", "3m", "4m", "5m", "6m", "2p", "3p", "4p", "3s", "4s", "5s", "E"], winning_tile: "E", melds: [], ura_indicators: [], han: 1, fu: 30, yakuman_units: 0, yaku: ["RIICHI"], dora: 0, aka: 0, ura: 0 }],
+    score_delta: [1000, -1000, 0, 0], scores: [26000, 24000, 25000, 25000], kyotaku: 0, game_over: false };
+  await openFixture(page, table);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const modal = page.getByRole("dialog");
+    await expect(modal).toContainText("荣和");
+    expect(await modal.locator(".result-art img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    await modal.getByRole("button", { name: "继续下一局" }).scrollIntoViewIfNeeded();
+    await expect(modal.getByRole("button", { name: "继续下一局" })).toBeInViewport();
+    expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `/tmp/riichilm-result-${width}.png` });
+  }
+});
+
+test("round arrival never blocks a legal discard and respects reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const { actions } = await openFixture(page, snapshot());
+  const intro = page.locator(".round-intro");
+  if (await intro.count()) expect(await intro.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("none");
+  await page.getByRole("button", { name: "打出 5pr", exact: true }).click();
+  await expect.poll(() => actions.length).toBe(1);
+});
+
+test("loading artwork is bundled and cancel remains reachable on a phone", async ({ page }) => {
+  const table = snapshot();
+  await openFixture(page, table);
+  await page.screenshot({ path: "/tmp/riichilm-table.png" });
+  table.state = "loading";
+  table.view_version++;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".illustrated-loading")).toBeVisible();
+  const background = await page.locator(".illustrated-loading").evaluate((element) => getComputedStyle(element).backgroundImage);
+  const source = background.match(/url\("?([^"\)]+)"?\)/)?.[1];
+  expect(source).toBeTruthy();
+  expect((await page.request.get(source!)).ok()).toBe(true);
+  await expect(page.getByRole("button", { name: "取消并返回" })).toBeInViewport();
+  expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "/tmp/riichilm-loading-390.png" });
+});
+
+test("committed discards sound once while repeated polls and mute stay silent", async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = window as unknown as { soundNodes: number };
+    state.soundNodes = 0;
+    const original = AudioContext.prototype.createOscillator;
+    AudioContext.prototype.createOscillator = function () {
+      state.soundNodes++;
+      return original.call(this);
+    };
+  });
+  const table = snapshot();
+  await openFixture(page, table);
+  const nodes = () => page.evaluate(() => (window as unknown as { soundNodes: number }).soundNodes);
+  expect(await nodes()).toBe(0);
+  await page.getByRole("button", { name: "开启音效", exact: true }).click();
+  await expect.poll(nodes).toBe(2);
+  table.players![1].river.push({ tile: "C", tsumogiri: false, riichi: false, called: false });
+  table.view_version++;
+  await expect.poll(nodes).toBe(4);
+  table.view_version++;
+  await page.waitForTimeout(1100); // More than two polling intervals, with no new action.
+  expect(await nodes()).toBe(4);
+  await page.getByRole("button", { name: "关闭音效", exact: true }).click();
+  table.players![1].river.push({ tile: "E", tsumogiri: false, riichi: false, called: false });
+  table.view_version++;
+  await expect(page.locator(".river-1 > span")).toHaveCount(5);
+  expect(await nodes()).toBe(4);
+});
+
+test("result illustration follows winning seats, multi-ron selection and final ranks", async ({ page }) => {
+  const table = snapshot([]);
+  table.state = "round_result";
+  const winner = (actor: number) => ({ actor, target: 3, tsumo: false, hand: ["E"], winning_tile: "E", melds: [], ura_indicators: [], han: 1, fu: 30, yakuman_units: 0, yaku: [], dora: 0, aka: 0, ura: 0 });
+  table.result = { round_id: 0, revision: 1, kind: "win", reason: null, winners: [winner(0), winner(2)], score_delta: [1000, 0, 1000, -2000], scores: [26000, 25000, 26000, 23000], kyotaku: 0, game_over: false };
+  await openFixture(page, table);
+  const characterAt = async (seat: number) => {
+    const avatar = seat === 0 ? page.locator(".self-info .seat-avatar") : page.locator(`.opponent-seat[data-seat="${seat}"] .seat-avatar`);
+    return (await avatar.getAttribute("class"))!.match(/portrait-(\d+)/)![1];
+  };
+  const art = page.locator(".result-art");
+  await expect(art).toHaveAttribute("data-character", await characterAt(0));
+  await page.locator(".result-character-tabs button").nth(1).click();
+  await expect(art).toHaveAttribute("data-seat", "2");
+  await expect(art).toHaveAttribute("data-character", await characterAt(2));
+  await expect(art.locator("img")).toHaveAttribute("src", new RegExp(`victory-${await characterAt(2)}-`));
+  table.view_version++;
+  await expect(page.locator(".result-character-tabs button").nth(1)).toHaveAttribute("aria-pressed", "true");
+  table.state = "finished";
+  table.final = { scores: [25000, 30000, 26000, 19000], ranks: [3, 1, 2, 4] };
+  table.view_version++;
+  await expect(art).toHaveAttribute("data-seat", "1");
+  await expect(art).toHaveAttribute("data-character", await characterAt(1));
+  await expect(page.locator(".result-character-tabs")).toHaveCount(0);
+  table.state = "round_result";
+  delete table.final;
+  table.result.winners = [];
+  table.result.kind = "draw";
+  table.view_version++;
+  await expect(art.locator("img")).toHaveCount(0);
+});
+
+test("all thirteen character result illustrations are bundled and load locally", async ({ page }) => {
+  await openFixture(page, snapshot());
+  const scripts = await page.locator('script[type="module"][src]').evaluateAll((elements) => elements.map((element) => (element as HTMLScriptElement).src));
+  const assets = new Set<string>();
+  for (const source of scripts) {
+    const code = await (await page.request.get(source)).text();
+    for (const match of code.matchAll(/\/assets\/victory-\d+-[^"\s]+?\.webp/g)) assets.add(match[0]);
+  }
+  expect(assets.size).toBe(characterNames.length);
+  for (let id = 0; id < characterNames.length; id++) {
+    const url = [...assets].find((asset) => asset.startsWith(`/assets/victory-${id}-`));
+    expect(url, `missing illustration for ${characterNames[id]}`).toBeTruthy();
+    expect((await page.request.get(url!)).ok()).toBe(true);
+  }
+});

@@ -10,7 +10,9 @@
 
 用自己的数据训练麻将策略，通过自我对弈改进模型，再到真实规则的牌桌上观察它的选择。RiichiLM 将 Qwen3 序列模型、Rust 规则引擎、强化学习与插画风浏览器牌桌连接在同一套研究代码中。
 
-> **项目仅供学习与研究，不提供任何训练数据、评测数据集、预训练模型或训练后的 checkpoint。** 使用者可自行提供拥有相应使用权且格式兼容的数据训练模型，也可提供兼容 checkpoint 继续训练。随机对手无需权重；外接 LLM 使用你自行配置的服务。
+> **预训练权重即将开源。** 发布时将在本 README 公布下载地址、权重许可和使用说明。
+
+项目用于学习与研究，不分发训练数据、评测数据集或私有牌谱。训练或完整续训需自行提供拥有相应使用权且格式兼容的输入。随机对手无需权重；外接 LLM 使用你自行配置的服务。
 
 ## 项目亮点
 
@@ -117,6 +119,8 @@ uv pip install --python .venv/bin/python --no-deps outputs/wheels/riichienv-*.wh
 打开终端打印的本机地址，选择随机对手即可开始，无需数据、模型下载或 API 密钥。构建完成后，生产服务只需 Python。服务用于本机访问；对局只保留在当前会话中，刷新或退出后重新开始。
 
 模型玩家使用 GPU 时，传入 `--device cuda:0`（ROCm 也使用此名称）。Web 推理采用 BF16 计算与 FlashAttention，模型参数保留 FP32；CPU 推理使用 FP32。GPU 模型推理需要 BF16 与 FlashAttention 支持，不可用时明确报错。半精度计算的概率和采样结果可能与 FP32 不同。
+
+Web 与 CLI 模型玩家按席位保留前缀 KV，复用相同历史并重算变化的尾部。`--gpu-memory-gib 16` 设置所有模型和席位共享的进程预算，默认16GiB；显存按需分配，实际额度根据空闲显存动态调整并为驱动预留余量。显存紧张时先淘汰较旧的前缀缓存。GPU 预填充每块最多2048 token，保留全部上下文。CPU 忽略 GPU 预算；完整与增量计算的 BF16 舍入可能不同。
 
 自定义 Qwen3 策略权重：将 `.pt`／`.pth` 直接放入 `weights/` 并刷新模型列表，或传入 `--weights-root /path/to/weights`。支持训练 `state.pt`、精简推理文件和裸 `state_dict`，不要求 run 元数据、训练数据或指纹一致；模型张量须与网络结构相容。裸权重默认当前 v2 输入、8192 token 和 RoPE theta 1000000，可通过同名 `.json` 模型配置覆盖。使用 `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` 去掉优化器及恢复状态，保留张量精度和原文件。
 

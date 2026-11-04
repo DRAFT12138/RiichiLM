@@ -39,26 +39,36 @@ class RandomPlayer:
 class ModelPlayer:
     """Preserve the checkpoint policy's generated-action binding and probabilities."""
 
-    def __init__(self, policy, *, seed=0):
+    def __init__(self, policy, *, seed=0, memory_budget=None):
         import torch
+        from mahjong.inference.prefix_cache import PrefixCache
 
         self.policy = policy
         self.generator = torch.Generator(device="cpu").manual_seed(seed)
+        self.prefix_cache = PrefixCache()
+        self.memory_budget = memory_budget
+        if memory_budget is not None:
+            memory_budget.register(self.prefix_cache)
 
     def choose(self, view, *, deadline, cancel=None):
         from mahjong.inference.policy import DecodeOptions
 
+        if self.memory_budget is not None:
+            self.memory_budget.refresh()
         result = self.policy.generate(
             self.policy.prepare(view), options=DecodeOptions(strategy="categorical"),
-            generator=self.generator, deadline_monotonic=deadline, cancel=cancel
+            generator=self.generator, deadline_monotonic=deadline, cancel=cancel,
+            prefix_cache=self.prefix_cache if self.memory_budget is not None else None,
         )
         return PlayerChoice(view.key, generation=result)
 
 
-def load_model_policy(path, *, kind='checkpoint', device='cpu'):
+def load_model_policy(path, *, kind='checkpoint', device='cpu', memory_budget=None):
     """Use one model execution policy for Web and headless model players."""
     from mahjong.inference.policy import PolicyInference
 
+    if memory_budget is not None:
+        memory_budget.refresh()
     precision = 'bf16-mixed' if device == 'cuda:0' else '32-true'
     if kind == 'weights':
         loader = PolicyInference.from_weights

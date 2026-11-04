@@ -10,7 +10,9 @@
 
 Build a Mahjong policy, train it on your own data, improve it through self-play, and watch its decisions at a real table. RiichiLM connects Qwen3-based sequence models, a Rust rules engine, reinforcement learning, and an illustrated browser arena in one research codebase.
 
-> **For learning and research only. We do not provide training data, evaluation datasets, pretrained models, or trained checkpoints.** Bring your own appropriately licensed, compatible data and train your own models. You may continue training from a compatible checkpoint you provide. Random opponents work without any weights; external LLM players use a service you configure.
+> **Pretrained weights are coming soon as an open-source release.** Download links, the weights license, and usage instructions will be announced in this README when available.
+
+For learning and research. Training data, evaluation datasets, and private game records are not distributed. To train or fully resume a run, supply appropriately licensed, compatible inputs. Random opponents work without weights; external LLM players use a service you configure.
 
 ## Why RiichiLM?
 
@@ -117,6 +119,8 @@ Build the frontend with Node.js 20.19+ or 22.12+, then start the local server:
 Open the printed loopback URL. Start with random opponents; no data, model download, or API key is needed. Once built, production serving needs only Python. The server is intended for local use. Games live in the current session; refreshing or exiting starts over.
 
 For GPU model players, start with `--device cuda:0` (also used by ROCm). Web inference uses BF16 computation with FlashAttention and keeps FP32 model parameters; CPU inference uses FP32. GPU model inference requires BF16 and FlashAttention support and fails explicitly when unavailable. Half-precision execution can change probabilities and sampled actions relative to FP32.
+
+Web and CLI model players keep separate prefix KV caches for each seat, reuse matching history, and recompute changed tails. `--gpu-memory-gib 16` sets the shared process budget (default: 16 GiB); allocations grow on demand, and the effective cap adapts to free VRAM with driver headroom. Under pressure, older prefix caches are evicted first. GPU prefill uses chunks of at most 2,048 tokens while retaining the full context. CPU inference ignores the GPU cap. BF16 rounding may differ between full and incremental computation.
 
 For custom Qwen3 policy weights, place `.pt` or `.pth` files directly in `weights/` and refresh the model list, or pass `--weights-root /path/to/weights`. This entry accepts training `state.pt`, inference exports and plain state dictionaries without run metadata, training data or fingerprint checks; model tensors must fit the network. Plain state dictionaries default to the current v2 input, 8,192-token context and RoPE theta 1,000,000; override these with a same-stem `.json` model configuration. Export a smaller file without optimizer or recovery state using `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt`; tensor precision and the original file are preserved.
 

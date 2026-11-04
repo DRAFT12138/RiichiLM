@@ -162,6 +162,7 @@ def serve(options):
         models_root=options.models_root,
         weights_root=options.weights_root,
         device=options.device,
+        gpu_memory_gib=options.gpu_memory_gib,
         port=options.port,
         dev_origin=options.dev_origin,
         lease_seconds=options.lease_seconds,

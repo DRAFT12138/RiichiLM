@@ -18,6 +18,9 @@ import { useLabels } from "./labels";
 import { Tile } from "./Tile";
 import type { Cast } from "./cast";
 import { characterNames } from "./cast";
+import { SoundControl, useTableSound } from "./sound";
+const victoryArt = import.meta.glob<string>("./assets/illustrations/victory-*.webp", { eager: true, query: "?url", import: "default" });
+const characterVictoryArtwork = (id: number) => victoryArt[`./assets/illustrations/victory-${id}.webp`];
 function Melds({ player, labels }: { player: Player; labels: string[] }) {
   const { t } = useI18n();
   const { actionNames } = useLabels();
@@ -163,7 +166,15 @@ export function Game({
   cast: Cast;
   sessionInvalid: boolean;
 }) {
+  useTableSound(table);
   const { t, locale } = useI18n();
+  const [introHidden, setIntroHidden] = useState(false);
+  const [resultSeat, setResultSeat] = useState<number | null>(null);
+  useEffect(() => {
+    setIntroHidden(false);
+    const timer = window.setTimeout(() => setIntroHidden(true), 1800);
+    return () => window.clearTimeout(timer);
+  }, [table.table_id, table.round_id, table.state === "loading"]);
   const { actionNames, modes, names, observerNames, winds, yakuNames } = useLabels();
   const [group, setGroup] = useState<string | null>(null),
     [preview, setPreview] = useState<string | null>(null),
@@ -201,6 +212,7 @@ export function Game({
   }, [table.view_version, table.busy, pending]);
   useEffect(() => {
     setResultHidden(false);
+    setResultSeat(null);
   }, [table.round_id, table.state]);
   useEffect(() => {
     if (resultHidden) resultReopenRef.current?.focus();
@@ -285,6 +297,11 @@ export function Game({
     const c = findDiscard(tile, drawn);
     if (c) void submit(c);
   };
+  const resultSeats = table.final
+    ? table.final.ranks.flatMap((rank, seat) => rank === 1 ? [seat] : [])
+    : [...new Set(table.result?.winners.map((winner) => winner.actor) ?? [])];
+  const featuredSeat = resultSeat != null && resultSeats.includes(resultSeat) ? resultSeat : resultSeats[0];
+  const featuredCharacter = featuredSeat == null ? undefined : cast.seats[featuredSeat];
   const status =
     table.thinking !== null && table.thinking !== undefined
       ? t("{seat}正在思考", { seat: labels[table.thinking] })
@@ -298,7 +315,10 @@ export function Game({
   return (
     <>
       {table.state === "loading" ? (
-        <div className="loading-room">
+        <div className="loading-room illustrated-loading">
+          <div className="interlude-shade" aria-hidden="true" />
+          <div className="loading-copy">
+          <div className="eyebrow">RiichiLM · {t("入席准备")}</div>
           <div className="loading-tiles">
             <Tile tile="E" />
             <Tile tile="5s" />
@@ -309,6 +329,7 @@ export function Game({
           <p role="status">{t("正在校验并加载你的对手，准备这场对局。")}</p>
           <button className="text-button" disabled={pending} onClick={() => void onExit()}>
             {t("取消并返回")}</button>
+          </div>
         </div>
       ) : table.state === "failed" ? (
         <div className="loading-room">
@@ -326,6 +347,7 @@ export function Game({
             <div className="felt-frame">
               <div className={`felt-table ${table.spectator ? "spectator-table" : ""}`}>
                 <div className="table-tools">
+                  <SoundControl />
                   <LanguageSwitcher />
                   <span className="table-mode">{modes[table.mode].name}</span>
                   {resultHidden && (table.state === "round_result" || table.state === "finished") && (
@@ -401,6 +423,10 @@ export function Game({
                     )}
                   </div>
                 )}
+                {!introHidden && table.state === "playing" && <div className="round-intro" key={table.round_id} aria-hidden="true">
+                  <span>RiichiLM</span><strong>{t("{wind}{round}局", { wind: winds[table.round_wind], round: ["", t("一"), t("二"), t("三"), t("四")][table.round_number] })}</strong>
+                  <small>{table.honba} {t("本场")} · {t("好牌，值得等一等。")}</small>
+                </div>}
                 <div className="table-emblem" aria-hidden="true">
                   雀</div>
                 <div className="felt-corner tl" />
@@ -411,7 +437,7 @@ export function Game({
                   <Opponent key={p.seat} player={p} table={table} position={position(p.seat)} portrait={cast.seats[p.seat]} />
                 ))}
                 <div className="table-center">
-                  <div className="center-compass" aria-hidden="true">
+                  <div className="center-compass" data-turn={table.thinking != null ? position(table.thinking) : !table.response_window && candidates.length ? 0 : undefined} aria-hidden="true">
                     <span>{windAt(2)}</span>
                     <span>{windAt(3)}</span>
                     <span>{windAt(1)}</span>
@@ -452,7 +478,7 @@ export function Game({
                 <div className="self-seat">
                   <div className="self-info" data-seat={own.seat}>
                     <span className="seat-wind">{winds[own.wind]}</span>
-                    <span className={`seat-avatar ${table.spectator ? `portrait-${cast.seats[own.seat]}` : ""}`} aria-hidden="true">
+                    <span className={`seat-avatar portrait-${cast.seats[own.seat]}`} aria-hidden="true">
                       {table.spectator ? <Bot size={17} /> : <UserRound size={17} />}
                     </span>
                     <strong>{labels[own.seat]}{table.spectator ? t(" · 观战视角") : ""}</strong>
@@ -663,12 +689,19 @@ export function Game({
             {(table.state === "round_result" || table.state === "finished") && !resultHidden && !sessionInvalid && (
               <div className="modal-backdrop">
                 <section
-                  className="result-modal"
+                  className={`result-modal cinematic-result ${featuredCharacter != null ? "has-winner" : "draw-result"}`}
                   ref={exitConfirm ? undefined : modalRef}
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="result-heading"
                 >
+                  <div className="result-art" data-character={featuredCharacter} data-seat={featuredSeat}>
+                    {featuredCharacter != null ? <>
+                      <img key={featuredCharacter} src={characterVictoryArtwork(featuredCharacter)} alt={t("{name}的结算立绘", { name: t(characterNames[featuredCharacter]) })} />
+                      <span>{t(characterNames[featuredCharacter])}<small>{labels[featuredSeat]}</small></span>
+                    </> : <span>RiichiLM</span>}
+                  </div>
+                  <div className="result-content">
                   <div className="eyebrow">
                     {table.state === "finished"
                       ? t("感谢对局")
@@ -693,6 +726,10 @@ export function Game({
                       : t("{wind}{round}局 · {honba}本场", { wind: winds[table.round_wind], round: ["", t("一"), t("二"), t("三"), t("四")][table.round_number], honba: table.honba })}
                     {table.final ? t(" · 最终点数与排名") : t(" · 本局结算")}
                   </p>
+                  {resultSeats.length > 1 && <div className="result-character-tabs" aria-label={t("和牌角色")}>
+                    {resultSeats.map((seat) => <button key={seat} type="button" aria-pressed={seat === featuredSeat}
+                      onClick={() => setResultSeat(seat)}>{labels[seat]} · {t(characterNames[cast.seats[seat]])}</button>)}
+                  </div>}
                   {table.result?.winners.map((w) => (
                     <div className="winner" key={w.actor}>
                       <div className="winner-title">
@@ -796,6 +833,7 @@ export function Game({
                           : t("继续下一局")}
                       <ArrowRight size={17} />
                     </button>
+                  </div>
                   </div>
                 </section>
               </div>

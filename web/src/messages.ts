@@ -1,5 +1,13 @@
 /** English and Japanese translations; Chinese source messages are the fallback. */
 export const messages: Record<string, readonly [string, string]> = {
+  "{name}的结算立绘": ["{name} result illustration", "{name}のリザルト立ち絵"],
+  "和牌角色": ["Winning characters", "和了キャラクター"],
+  "开启音效": ["Enable sound", "効果音をオン"],
+  "关闭音效": ["Mute sound", "効果音をオフ"],
+  "音量设置": ["Volume settings", "音量設定"],
+  "音效音量": ["Sound volume", "効果音の音量"],
+  "入席准备": ["Preparing your table", "対局準備"],
+
   "自定义权重": ["Custom weights", "カスタム重み"],
   "RiichiLM 官网": ["RiichiLM official website", "RiichiLM 公式サイト"],
   "学习 · 对局 · 探索": ["LEARN · PLAY · EXPLORE", "学ぶ · 打つ · 探る"],

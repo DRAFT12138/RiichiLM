@@ -3488,3 +3488,99 @@ html[lang="en"] .round-counters { font-size: 11px; }
   .error-banner { flex-wrap: wrap; }
   .error-banner > span { flex: 1 1 200px; overflow-wrap: anywhere; }
 }
+
+/* Salon presentation: local artwork, restrained motion and clear playing surfaces. */
+.app-shell.in-game {
+  background: linear-gradient(#06131bba, #06131be8), url('./assets/illustrations/salon-interlude.webp') center / cover fixed;
+}
+.felt-frame {
+  padding: 13px;
+  background: linear-gradient(135deg, #98784a, #322b27 12%, #181c22 45%, #423b30 85%, #b7965a);
+  box-shadow: inset 0 0 0 1px #d8bc7370, inset 0 0 0 5px #151e25, 0 22px 70px #0009;
+}
+.felt-table {
+  background: radial-gradient(ellipse at 50% 44%, #347b72, #205b56 45%, #123d41 85%);
+  box-shadow: inset 0 0 110px #021c2b99, inset 0 0 0 1px #ddd0a32b;
+}
+.table-center {
+  background: linear-gradient(145deg, #16373d, #0a242d);
+  box-shadow: 0 8px 24px #00131980, inset 0 0 0 1px #d1b47570;
+}
+.self-hand {
+  padding: 0;
+  box-shadow: 0 2px #c2a9767a;
+  border-radius: 10px;
+  background: linear-gradient(transparent, #082c3955);
+}
+.self-hand button.tile:not(:disabled):hover,
+.self-hand button.tile:not(:disabled):focus-visible {
+  transform: translateY(-13px);
+  filter: brightness(1.13);
+  box-shadow: 0 0 20px #e8ca7890, 0 12px 10px #001b2a88;
+}
+.self-hand button.tile:not(:disabled):active { transform: translateY(-6px) scale(.97); }
+.self-info .seat-avatar { border: 2px solid #d4b779; }
+.river > span:last-child:not(.called) .tile { box-shadow: 0 0 0 1px #f3dfa066, 0 3px 8px #001b2c70; }
+.turn-status:has(.your-turn) { color: #ffe5a9; }
+.action-dock:has(.your-turn) { border-color: #d4b47788; box-shadow: 0 0 24px #d9ad4115; }
+.button.win-button { background: linear-gradient(135deg, #ffe3a0, #ce9650); color: #30281c; box-shadow: 0 0 22px #efb45b44; }
+.sound-control { display: inline-flex; align-items: center; position: relative; flex-shrink: 0; }
+.sound-control .sound-toggle { border-radius: 8px 0 0 8px; }
+.sound-settings { height: 34px; width: 20px; padding: 0; border: 1px solid #9abfaf55; border-left: 0; border-radius: 0 8px 8px 0; background: #19383f; color: #dae8df; }
+.sound-popover { position: absolute; right: 0; top: calc(100% + 10px); width: 205px; padding: 16px; background: #122b35; border: 1px solid #c8ad6e88; border-radius: 12px; box-shadow: 0 10px 30px #0008; z-index: 25; font-size: 12px; display: grid; gap: 12px; color: #f4e3bc; }
+.sound-popover input { width: 100%; accent-color: #ddbc7a; }
+.sound-popover small { text-align: right; }
+.illustrated-loading { padding: 0; position: relative; overflow: hidden; isolation: isolate; min-height: min(760px, calc(100svh - 48px)); border: 1px solid #d0b57866; border-radius: 20px; background: url('./assets/illustrations/salon-interlude.webp') center / cover; align-items: stretch; text-align: left; }
+.interlude-shade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, #071925e8, #07192580 48%, transparent 80%); }
+.loading-copy { min-height: inherit; width: 54%; padding: clamp(30px, 7vw, 100px); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
+.loading-copy .eyebrow { color: #e8cd99; letter-spacing: 3px; font-size: 12px; }
+.loading-copy h2 { color: #fff0d3; line-height: 1.6; font-size: clamp(24px, 3vw, 36px); }
+.loading-copy p { text-align: left; color: #c7dadb; line-height: 1.9; max-width: 320px; }
+.loading-copy .text-button { margin-top: 24px; color: #ead4a4; }
+.loading-copy .loading-tiles { justify-content: flex-start; margin-top: 35px; }
+.round-intro { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); width: min(480px, 84%); padding: 26px 20px; text-align: center; z-index: 7; pointer-events: none; border-block: 1px solid #e4c283b3; background: linear-gradient(90deg, #0b232500, #0b2325f5 18%, #0b2325f5 82%, #0b232500); animation: round-arrival 1.8s both; }
+.round-intro > span { display: block; color: #c7b58b; letter-spacing: 6px; font-size: 10px; }
+.round-intro strong { display: block; margin: 10px 0; font: 48px serif; color: #f8dfac; text-shadow: 0 3px 15px #0008; }
+.round-intro small { color: #c6d8cc; letter-spacing: 2px; }
+@keyframes round-arrival { 0% { opacity: 0; translate: 0 10px; } 18%, 75% { opacity: 1; translate: 0 0; } 100% { opacity: 0; translate: 0 -8px; } }
+.cinematic-result { position: relative; width: 1040px; max-width: 100%; padding: 0; display: grid; grid-template-columns: minmax(230px, .75fr) minmax(0, 1fr); background: linear-gradient(120deg, #244c4d, #10252f 50%); border-color: #c1a56e; }
+.result-art { position: relative; min-height: 570px; overflow: hidden; background: radial-gradient(ellipse at 40% 45%, #c4a87566, transparent 60%), linear-gradient(#183a4580, #0b2931c0), url('./assets/illustrations/salon-interlude.webp') left center / cover; }
+.result-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(0deg, #0b252e, transparent 30%), linear-gradient(90deg, transparent 80%, #102831); }
+.result-art img { position: absolute; height: 100%; width: 100%; object-fit: cover; object-position: center top; filter: drop-shadow(0 10px 18px #03151d88); animation: portrait-arrival .55s ease-out both; }
+.result-art > span { position: absolute; bottom: 30px; left: 30px; z-index: 1; font: 24px Georgia, serif; letter-spacing: 5px; color: #e2c699; }
+.result-content { padding: 32px; min-width: 0; }
+.cinematic-result h2 { font-size: clamp(28px, 3vw, 42px); }
+.cinematic-result .winner-hand { flex-wrap: wrap; row-gap: 8px; }
+.cinematic-result .result-actions { flex-wrap: wrap; gap: 12px; }
+.cinematic-result .result-actions > span { flex: 1 0 100%; }
+.draw-result .result-art img { display: none; }
+@keyframes portrait-arrival { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: none; } }
+@media (max-width: 720px) {
+  .felt-frame { padding: 5px; }
+  .illustrated-loading { min-height: 72svh; background-position: right center; }
+  .loading-copy { padding: 26px; width: 100%; justify-content: flex-end; background: linear-gradient(transparent, #071925ee 65%); }
+  .loading-copy .loading-tiles { display: none; }
+  .loading-copy h2 { margin-top: 18px; }
+  .cinematic-result { display: block; }
+  .result-art { min-height: 150px; height: 150px; }
+  .result-art img { object-fit: cover; object-position: center top; width: 60%; right: 0; }
+  .result-art > span { bottom: 25px; left: 22px; font-size: 20px; }
+  .result-content { padding: 20px; }
+  .cinematic-result h2 { margin-top: 8px; }
+  .sound-control .sound-toggle { width: 30px; min-width: 30px; }
+  .table-tools { gap: 4px; }
+  .table-tools .language-switcher select { max-width: 84px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+.center-compass[data-turn="2"] span:nth-child(1),
+.center-compass[data-turn="3"] span:nth-child(2),
+.center-compass[data-turn="1"] span:nth-child(3),
+.center-compass[data-turn="0"] span:nth-child(4) { color: #ffe6a3; text-shadow: 0 0 10px #f7cd57; background: #cfac542b; border-color: #e9c78088; }
+
+.result-art > span small { display: block; margin-top: 8px; font: 12px sans-serif; letter-spacing: 2px; color: #d2e4dc; }
+.result-character-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.result-character-tabs button { padding: 8px 12px; border: 1px solid #a4b58b66; border-radius: 20px; background: #193c43; font-size: 12px; }
+.result-character-tabs button[aria-pressed="true"] { border-color: #e2c58a; background: #e2c58a; color: #19343b; }

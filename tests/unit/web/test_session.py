@@ -11,6 +11,24 @@ def hanging_worker(connection, config, device, decision_timeout):
     time.sleep(60)
 
 
+def budget_probe_worker(connection, config, device, decision_timeout):
+    connection.send(dict(type='failed', error=f"budget={config['gpu_memory_gib']}"))
+    connection.close()
+
+
+def test_configured_memory_budget_reaches_real_spawn(tmp_path):
+    s = Session(tmp_path, gpu_memory_gib=6.5, worker=budget_probe_worker)
+    try:
+        assert s.bootstrap()['gpu_memory_gib'] == 6.5
+        page = uuid.uuid4().hex
+        s.init_page(page, s.generation)
+        s.create(page, 'budget-create', 'single', ['random']*3)
+        wait_until(lambda: s.snapshot(page)['state'] == 'failed')
+        assert s.snapshot(page)['error'] == 'budget=6.5'
+    finally:
+        s.close()
+
+
 def wait_until(check, timeout=15):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

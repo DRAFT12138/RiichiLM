@@ -31,7 +31,7 @@ Browser tests need Chromium available to Playwright; `CHROMIUM_EXECUTABLE` may s
 - Private source-specific data processing, internal agent instructions, repository skills, project memory, internal design/review records, and private acceptance archives.
 - Features for cheating, live-game assistance, or unauthorized access to online services.
 
-Do not attach private data or weights to public issues, PRs, CI logs, or release artifacts. Redact diagnostics before posting. No dataset or trained-weight contribution is requested or distributed by this project.
+Do not attach private data or weights to public issues, PRs, CI logs, or release artifacts. Redact diagnostics before posting. Dataset and trained-weight contributions are not requested. Project pretrained weights are coming soon; their download links and license will be announced in the README.
 
 ## License and attribution
 
