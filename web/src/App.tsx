@@ -32,6 +32,7 @@ export function App() {
     sessionInvalidRef = useRef(false),
     refreshPageRef = useRef<HTMLButtonElement>(null),
     mounted = useRef(true),
+    viewQueue = useRef<Promise<void>>(Promise.resolve()),
     createAttempt = useRef<{ id: string; mode: Mode; opponents: string[]; spectator: boolean; uncertain: boolean } | null>(null);
   useEffect(() => {
     mounted.current = true;
@@ -242,6 +243,18 @@ export function App() {
     return false;
   }
   function control(control: SpectatorControl, value?: number) {
+    if (table && control === "view") {
+      const expected = table;
+      // Serialize view requests independently of commands that wait for AI.
+      // Retrying an uncertain request retains its ID and the user's seat order.
+      viewQueue.current = viewQueue.current.then(async () => {
+        if (!mounted.current || sessionInvalidRef.current || active.current !== expected.table_id) return;
+        await command(expected, (requestId) => api.control(expected, control, value, requestId));
+      }).catch((error) => {
+        if (mounted.current && active.current === expected.table_id) setError((error as Error).message);
+      });
+      return;
+    }
     if (table) void run(async () => { await command(table, (requestId) => api.control(table, control, value, requestId)); });
   }
   const refresh = () => {

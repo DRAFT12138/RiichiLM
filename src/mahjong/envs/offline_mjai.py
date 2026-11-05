@@ -626,6 +626,18 @@ class OfflineSession:
         if waits is not None:
             self.riichi_waits[actor]=waits
         self.env.is_rinshan_flag=False
+        if self.furiten is not None:
+            # A no-yaku completion cannot be claimed, so missing it is already
+            # proved at the discard, without observing a private PASS. It still
+            # causes temporary furiten across the whole wait, as in native play.
+            for player in range(4):
+                if player == actor or player in self.declarations:
+                    continue
+                if any(v is True for v in self.furiten_state(player).values()):
+                    continue
+                value=self.evaluate_win(player,tile,False)
+                if value.has_win_shape and not value.is_win:
+                    self.furiten.observe(player,riichi=False,ron_available=True,choice='NO_RON')
         self.action_actor=None
         self.next_draw=(actor+1)%4
         self.last_draw=None

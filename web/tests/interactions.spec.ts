@@ -261,6 +261,41 @@ test("desktop spectator notes stay beside the table without covering the play ar
   await expect(page.locator(".decision-panel")).toHaveCount(0);
 });
 
+test("all four seats show actual model names or random strategy during thinking and after changing view", async ({ page }, testInfo) => {
+  const table = snapshot([]);
+  table.spectator = true;
+  table.viewer = 0;
+  table.paused = true;
+  table.thinking = 1;
+  table.controllers = [
+    { kind: "llm", checkpoint_id: null, name: "本地服务", model: "Qwen3-235B-A22B-Instruct" },
+    { kind: "model", checkpoint_id: "riichilm-policy-step-450000.pth" },
+    { kind: "random", checkpoint_id: null },
+    { kind: "llm", checkpoint_id: null, name: "推理服务", model: "deepseek-reasoner" },
+  ];
+  const expected = ["本地服务 · Qwen3-235B-A22B-Instruct", "riichilm-policy-step-450000.pth", "随机策略", "推理服务 · deepseek-reasoner"];
+  await openFixture(page, table);
+  const policy = (seat: number) => seat === table.viewer
+    ? page.locator(".self-info .seat-policy")
+    : (seat - table.viewer! + 4) % 4 === 2
+      ? page.locator(".seat-2 .seat-policy")
+      : page.locator(`.compact-seat-score[data-seat="${seat}"] .seat-policy`);
+  for (const width of [1440, 900, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const seat of [0, 1, 2, 3]) {
+      await expect(policy(seat)).toBeVisible();
+      await expect(policy(seat)).toHaveText(expected[seat]);
+      await expect(policy(seat)).toHaveAttribute("title", expected[seat]);
+    }
+    expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: testInfo.outputPath(`seat-models-${width}.png`) });
+  }
+  table.viewer = 2;
+  table.view_version++;
+  await expect(page.locator('.self-info[data-seat="2"]')).toBeVisible();
+  for (const seat of [0, 1, 2, 3]) await expect(policy(seat)).toHaveText(expected[seat]);
+});
+
 test("characters reshuffle in the lobby and stay with their seats throughout a table", async ({ page }) => {
   const table = snapshot();
   table.spectator = true;
@@ -780,6 +815,44 @@ test("a lost view-control response keeps the old projection until the same reque
   await expect(page.locator(".self-hand [aria-label='1m']")).toBeVisible();
 });
 
+test("spectator can repeatedly switch seats while inference and a pause command are pending", async ({ page }) => {
+  const table = snapshot([]);
+  table.spectator = true;
+  table.viewer = 0;
+  table.thinking = 1;
+  table.paused = false;
+  await openFixture(page, table);
+  const views: number[] = [];
+  await page.route("**/api/table/control", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.control === "view") {
+      views.push(body.value);
+      table.viewer = body.value;
+      table.players!.forEach((p) => { p.hand = p.seat === body.value ? ["1m"] : null; p.drawn = null; });
+      table.view_version++;
+      await route.fulfill({ json: { status: "done", request_id: body.request_id } });
+    } else {
+      // Hold the HTTP response too: a view must bypass App's command lock.
+      table.busy = true;
+      table.view_version++;
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await route.fulfill({ json: { status: "processing", request_id: body.request_id } });
+    }
+  });
+  await page.getByRole("button", { name: "暂停播放" }).click();
+  await expect(page.getByRole("button", { name: "暂停播放" })).toBeDisabled();
+  const selector = page.getByRole("combobox", { name: "观战视角" });
+  for (const seat of [2, 3, 0]) {
+    await expect(selector).toBeEnabled();
+    await selector.selectOption(String(seat));
+    await expect(page.locator(`.self-info[data-seat="${seat}"]`)).toBeVisible();
+    await expect(page.locator(".self-hand [aria-label='1m']")).toBeVisible();
+    await expect(page.locator(".turn-status")).toContainText("南席正在思考");
+  }
+  expect(views).toEqual([2, 3, 0]);
+  await expect(page.getByRole("button", { name: "暂停播放" })).toBeDisabled();
+});
+
 test("a lost continue response retries the same round command", async ({ page }) => {
   const table = snapshot([]);
   table.state = "round_result";
@@ -1191,21 +1264,64 @@ test("round arrival never blocks a legal discard and respects reduced motion", a
   await expect.poll(() => actions.length).toBe(1);
 });
 
-test("loading artwork is bundled and cancel remains reachable on a phone", async ({ page }) => {
+test("loading artwork and copy stay centered with cancel visible on desktop and phones", async ({ page }, testInfo) => {
   const table = snapshot();
   await openFixture(page, table);
-  await page.screenshot({ path: "/tmp/riichilm-table.png" });
   table.state = "loading";
   table.view_version++;
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator(".illustrated-loading")).toBeVisible();
-  const background = await page.locator(".illustrated-loading").evaluate((element) => getComputedStyle(element).backgroundImage);
-  const source = background.match(/url\("?([^"\)]+)"?\)/)?.[1];
-  expect(source).toBeTruthy();
-  expect((await page.request.get(source!)).ok()).toBe(true);
-  await expect(page.getByRole("button", { name: "取消并返回" })).toBeInViewport();
-  expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(390);
-  await page.screenshot({ path: "/tmp/riichilm-loading-390.png" });
+  const room = page.locator(".illustrated-loading");
+  await expect(room).toBeVisible();
+  await page.getByRole("button", { name: "暂停立绘轮播" }).click();
+  for (const viewport of [{ width: 1440, height: 1100 }, { width: 390, height: 844 }, { width: 320, height: 640 }, { width: 844, height: 390 }]) {
+    await page.setViewportSize(viewport);
+    const card = (await room.boundingBox())!;
+    expect(Math.abs(card.x + card.width / 2 - viewport.width / 2)).toBeLessThan(2);
+    if (card.height <= viewport.height) {
+      expect(Math.abs(card.y + card.height / 2 - viewport.height / 2)).toBeLessThan(2);
+      await expect(page.getByRole("button", { name: "取消并返回" })).toBeInViewport();
+    }
+    const copy = (await page.locator(".loading-copy").boundingBox())!;
+    const heading = (await room.getByRole("heading").boundingBox())!;
+    expect(Math.abs(heading.x + heading.width / 2 - copy.x - copy.width / 2)).toBeLessThan(2);
+    expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+    const image = page.locator(".loading-character-art img.is-active");
+    await expect(image).toBeVisible();
+    expect(await image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`loading-${viewport.width}.png`) });
+  }
+});
+
+test("loading cycles only this table's characters, supports selection and pause, and keeps the cast on entry", async ({ page }) => {
+  const table = snapshot([]);
+  table.spectator = true;
+  await openFixture(page, table);
+  const characters = await Promise.all([0, 1, 2, 3].map((seat) =>
+    page.locator(`[data-seat="${seat}"] .seat-avatar`).getAttribute("class").then((value) => Number(value!.match(/portrait-(\d+)/)![1]))));
+  table.state = "loading";
+  table.view_version++;
+  const artwork = page.locator(".loading-character-art img.is-active");
+  await expect(artwork).toHaveAttribute("src", new RegExp(`victory-${characters[0]}-`));
+  const buttons = page.getByRole("group", { name: "本局角色" }).locator("button[aria-pressed]");
+  await expect(buttons).toHaveCount(4);
+  for (let step = 1; step <= 5; step++) {
+    await expect(artwork).toHaveAttribute("src", new RegExp(`victory-${characters[step % 4]}-`), { timeout: 6500 });
+  }
+  await page.getByRole("button", { name: "暂停立绘轮播" }).click();
+  for (const seat of [3, 0, 2, 1]) {
+    await buttons.nth(seat).click();
+    await expect(artwork).toHaveAttribute("src", new RegExp(`victory-${characters[seat]}-`));
+    await expect(buttons.nth(seat)).toHaveAttribute("aria-pressed", "true");
+  }
+  await page.waitForTimeout(4500);
+  await expect(artwork).toHaveAttribute("src", new RegExp(`victory-${characters[1]}-`));
+  await page.getByRole("button", { name: "继续立绘轮播" }).click();
+  await expect(artwork).toHaveAttribute("src", new RegExp(`victory-${characters[2]}-`), { timeout: 6500 });
+  table.state = "playing";
+  table.view_version++;
+  await expect(page.locator(".loading-screen")).toHaveCount(0);
+  for (const seat of [0, 1, 2, 3]) {
+    await expect(page.locator(`[data-seat="${seat}"] .seat-avatar`)).toHaveClass(new RegExp(`portrait-${characters[seat]}(?: |$)`));
+  }
 });
 
 test("committed discards sound once while repeated polls and mute stay silent", async ({ page }) => {

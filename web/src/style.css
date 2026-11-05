@@ -3530,14 +3530,42 @@ html[lang="en"] .round-counters { font-size: 11px; }
 .sound-popover { position: absolute; right: 0; top: calc(100% + 10px); width: 205px; padding: 16px; background: #122b35; border: 1px solid #c8ad6e88; border-radius: 12px; box-shadow: 0 10px 30px #0008; z-index: 25; font-size: 12px; display: grid; gap: 12px; color: #f4e3bc; }
 .sound-popover input { width: 100%; accent-color: #ddbc7a; }
 .sound-popover small { text-align: right; }
-.illustrated-loading { padding: 0; position: relative; overflow: hidden; isolation: isolate; min-height: min(760px, calc(100svh - 48px)); border: 1px solid #d0b57866; border-radius: 20px; background: url('./assets/illustrations/salon-interlude.webp') center / cover; align-items: stretch; text-align: left; }
-.interlude-shade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, #071925e8, #07192580 48%, transparent 80%); }
-.loading-copy { min-height: inherit; width: 54%; padding: clamp(30px, 7vw, 100px); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
+.game-content:has(> .loading-screen) { display: grid; place-items: center; }
+.loading-screen { width: 100%; max-width: 1136px; margin-inline: auto; }
+.illustrated-loading { padding: clamp(20px, 3vw, 44px); position: relative; overflow: hidden; isolation: isolate; min-height: min(760px, calc(100svh - 48px)); border: 1px solid #d0b57866; border-radius: 20px; background: url('./assets/illustrations/salon-interlude.webp') center / cover; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "copy art"; gap: 24px; align-items: center; text-align: center; }
+.interlude-shade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, #071925f0, #071925a6); }
+.loading-character-art { grid-area: art; position: relative; height: clamp(280px, 65svh, 640px); min-width: 0; }
+.loading-character-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; opacity: 0; transition: opacity .6s ease; filter: drop-shadow(0 12px 24px #0006); }
+.loading-character-art img.is-active { opacity: 1; }
+.loading-copy { grid-area: copy; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .loading-copy .eyebrow { color: #e8cd99; letter-spacing: 3px; font-size: 12px; }
 .loading-copy h2 { color: #fff0d3; line-height: 1.6; font-size: clamp(24px, 3vw, 36px); }
-.loading-copy p { text-align: left; color: #c7dadb; line-height: 1.9; max-width: 320px; }
+.loading-copy p { text-align: center; color: #c7dadb; line-height: 1.9; max-width: 320px; }
 .loading-copy .text-button { margin-top: 24px; color: #ead4a4; }
-.loading-copy .loading-tiles { justify-content: flex-start; margin-top: 35px; }
+.loading-copy .loading-tiles { justify-content: center; margin-top: 28px; margin-bottom: 26px; }
+.loading-character-name { margin: 18px 0 12px; color: #f4dbad; font-size: 14px; letter-spacing: 2px; }
+.loading-character-controls { display: flex; justify-content: center; align-items: center; gap: 6px; }
+.loading-character-controls button { display: grid; justify-items: center; gap: 5px; min-width: 44px; min-height: 44px; padding: 5px; border: 1px solid #cbb07544; border-radius: 10px; background: #0a222caa; color: #b9cdcb; cursor: pointer; font-size: 11px; }
+.loading-character-controls button[aria-pressed="true"] { border-color: #edcf8e; color: #ffe9bb; background: #6a563c66; }
+.loading-character-avatar { display: block; width: 36px; height: 36px; border-radius: 50%; background-image: var(--portrait-image); background-size: var(--portrait-size); background-position: var(--portrait-position); }
+.loading-character-controls .loading-cycle-toggle { align-content: center; }
+.seat-identity, .self-seat-identity { min-width: 0; }
+.self-seat-identity { max-width: 260px; }
+.seat-info .seat-identity { flex: 1; }
+.seat-thinking { font-size: 9px; color: #ffe2a0; }
+.seat-info .seat-policy, .compact-seat-score .seat-policy, .self-info .seat-policy {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere; max-width: 100%;
+  margin-top: 4px; color: #c5dcd5; font-size: 10px; line-height: 1.35; letter-spacing: 0;
+}
+.compact-seat-score { width: 160px; }
+.compact-seat-score .seat-policy { flex-basis: 100%; text-align: inherit; }
+@media (max-width: 720px) {
+  .compact-seat-score { width: 110px; }
+  .spectator-table .compact-seat-score { top: 212px; }
+  .seat-info .seat-policy, .compact-seat-score .seat-policy, .self-info .seat-policy { font-size: 9px; }
+  .self-seat-identity { flex: 1; max-width: 160px; }
+}
 .round-intro { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); width: min(480px, 84%); padding: 26px 20px; text-align: center; z-index: 7; pointer-events: none; border-block: 1px solid #e4c283b3; background: linear-gradient(90deg, #0b232500, #0b2325f5 18%, #0b2325f5 82%, #0b232500); animation: round-arrival 1.8s both; }
 .round-intro > span { display: block; color: #c7b58b; letter-spacing: 6px; font-size: 10px; }
 .round-intro strong { display: block; margin: 10px 0; font: 48px serif; color: #f8dfac; text-shadow: 0 3px 15px #0008; }
@@ -3557,10 +3585,12 @@ html[lang="en"] .round-counters { font-size: 11px; }
 @keyframes portrait-arrival { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: none; } }
 @media (max-width: 720px) {
   .felt-frame { padding: 5px; }
-  .illustrated-loading { min-height: 72svh; background-position: right center; }
-  .loading-copy { padding: 26px; width: 100%; justify-content: flex-end; background: linear-gradient(transparent, #071925ee 65%); }
+  .illustrated-loading { min-height: 0; padding: 18px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "art" "copy"; gap: 4px; }
+  .loading-character-art { height: clamp(160px, 34svh, 330px); }
+  .loading-copy { padding: 12px 0 0; width: 100%; }
   .loading-copy .loading-tiles { display: none; }
   .loading-copy h2 { margin-top: 18px; }
+  .loading-copy .text-button { margin-top: 18px; }
   .cinematic-result { display: block; }
   .result-art { min-height: 150px; height: 150px; }
   .result-art img { object-fit: cover; object-position: center top; width: 60%; right: 0; }

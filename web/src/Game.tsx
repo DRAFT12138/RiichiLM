@@ -21,6 +21,18 @@ import { characterNames } from "./cast";
 import { SoundControl, useTableSound } from "./sound";
 const victoryArt = import.meta.glob<string>("./assets/illustrations/victory-*.webp", { eager: true, query: "?url", import: "default" });
 const characterVictoryArtwork = (id: number) => victoryArt[`./assets/illustrations/victory-${id}.webp`];
+function SeatPolicy({ table, seat }: { table: Table; seat: number }) {
+  const { t } = useI18n();
+  const info = table.controllers?.[seat] || table.opponents?.[seat - 1];
+  const label = info?.kind === "llm"
+    ? [...new Set([info.name, info.model].filter(Boolean))].join(" · ") || "LLM"
+    : info?.kind === "model"
+      ? info.name || info.checkpoint_id || t("训练模型")
+      : info?.kind === "human" || (!table.spectator && seat === 0)
+        ? t("真人")
+        : t("随机策略");
+  return <small className="seat-policy" title={label}>{label}</small>;
+}
 function Melds({ player, labels }: { player: Player; labels: string[] }) {
   const { t } = useI18n();
   const { actionNames } = useLabels();
@@ -50,8 +62,7 @@ function Melds({ player, labels }: { player: Player; labels: string[] }) {
 function Opponent({ player, table, position, portrait }: { player: Player; table: Table; position: number; portrait: number }) {
   const { t, locale } = useI18n();
   const { observerNames, names, winds } = useLabels();
-  const info = table.controllers?.[player.seat] || table.opponents?.[player.seat - 1],
-    labels = table.spectator ? observerNames : names,
+  const labels = table.spectator ? observerNames : names,
     active = table.thinking === player.seat;
   return (
     <>
@@ -61,20 +72,12 @@ function Opponent({ player, table, position, portrait }: { player: Player; table
       >
         <div className="seat-info">
           <span className="seat-wind">{winds[player.wind]}</span>
-          <span className={`seat-avatar portrait-${portrait}`} aria-hidden="true">
+          <span className={`seat-avatar portrait-${portrait}`} title={t(characterNames[portrait])} aria-hidden="true">
             <Bot size={17} />
           </span>
-          <div>
-            <strong>{labels[player.seat]}</strong>
-            <small>
-              {active
-                ? t("{name} · 正在思考…", { name: t(characterNames[portrait]) })
-                : info?.kind === "model"
-                  ? t("{name} · 模型 {id}", { name: t(characterNames[portrait]), id: info.checkpoint_id?.slice(0, 7) || "" })
-                  : info?.kind === "llm"
-                    ? `${t(characterNames[portrait])} · ${info.name || "LLM"}`
-                  : t("{name} · 随机策略", { name: t(characterNames[portrait]) })}
-            </small>
+          <div className="seat-identity">
+            <strong>{labels[player.seat]}{active && <span className="seat-thinking"> · {t("思考中")}</span>}</strong>
+            <SeatPolicy table={table} seat={player.seat} />
           </div>
           <b>{player.score.toLocaleString(locale)}</b>
           {player.dealer && <span className="dealer-label">{t("庄家")}</span>}
@@ -88,7 +91,7 @@ function Opponent({ player, table, position, portrait }: { player: Player; table
         <Melds player={player} labels={labels} />
       </div>
       {position !== 2 && (
-        <div className={`compact-seat-score score-${position} ${active ? "thinking" : ""}`}>
+        <div className={`compact-seat-score score-${position} ${active ? "thinking" : ""}`} data-seat={player.seat}>
           <span>
             {labels[player.seat]} · {winds[player.wind]}
           </span>
@@ -97,6 +100,7 @@ function Opponent({ player, table, position, portrait }: { player: Player; table
           {active && <span className="compact-thinking">{t("思考中")}</span>}
           {player.dealer && <span className="dealer-label">{t("庄家")}</span>}
           {player.riichi && <span className="riichi-badge">{t("立直")}</span>}
+          <SeatPolicy table={table} seat={player.seat} />
         </div>
       )}
     </>
@@ -145,6 +149,66 @@ function River({
         </span>
       ))}
     </div>
+  );
+}
+function LoadingRoom({ cast, spectator, pending, onExit }: {
+  cast: Cast;
+  spectator?: boolean;
+  pending: boolean;
+  onExit: () => Promise<boolean>;
+}) {
+  const { t } = useI18n();
+  const { names, observerNames } = useLabels();
+  const [seat, setSeat] = useState(0);
+  const [cycling, setCycling] = useState(true);
+  const labels = spectator ? observerNames : names;
+  useEffect(() => {
+    if (!cycling) return;
+    const timer = window.setTimeout(() => setSeat((current) => (current + 1) % cast.seats.length), 4000);
+    return () => window.clearTimeout(timer);
+  }, [cycling, seat, cast.seats.length]);
+  return (
+    <section className="loading-screen" aria-label={t("入席准备")}>
+      <div className="loading-room illustrated-loading">
+        <div className="interlude-shade" aria-hidden="true" />
+        <div className="loading-character-art">
+          {cast.seats.map((character, index) => (
+            <img key={character} className={seat === index ? "is-active" : ""}
+              src={characterVictoryArtwork(character)}
+              alt={seat === index ? t("{name}的角色立绘", { name: t(characterNames[character]) }) : ""}
+              aria-hidden={seat !== index} decoding="async" />
+          ))}
+        </div>
+        <div className="loading-copy">
+          <div className="eyebrow">RiichiLM · {t("入席准备")}</div>
+          <div className="loading-tiles" aria-hidden="true">
+            <Tile tile="E" /><Tile tile="5s" /><Tile tile="7p" />
+          </div>
+          <LoaderCircle className="spin" size={24} aria-hidden="true" />
+          <h2>{t("好牌，值得等一等。")}</h2>
+          <p role="status">{t("正在校验并加载你的对手，准备这场对局。")}</p>
+          <div className="loading-character-name">{labels[seat]} · {t(characterNames[cast.seats[seat]])}</div>
+          <div className="loading-character-controls" role="group" aria-label={t("本局角色")}>
+            {cast.seats.map((character, index) => (
+              <button key={character} type="button" aria-label={`${labels[index]} · ${t(characterNames[character])}`}
+                aria-pressed={seat === index} onClick={() => setSeat(index)}>
+                <span className={`loading-character-avatar portrait-${character}`} aria-hidden="true" />
+                <span>{labels[index]}</span>
+              </button>
+            ))}
+            <button type="button" className="loading-cycle-toggle"
+              aria-label={cycling ? t("暂停立绘轮播") : t("继续立绘轮播")}
+              title={cycling ? t("暂停立绘轮播") : t("继续立绘轮播")}
+              onClick={() => setCycling((current) => !current)}>
+              {cycling ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+          </div>
+          <button className="text-button" disabled={pending} onClick={() => void onExit()}>
+            {t("取消并返回")}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 export function Game({
@@ -315,22 +379,7 @@ export function Game({
   return (
     <>
       {table.state === "loading" ? (
-        <div className="loading-room illustrated-loading">
-          <div className="interlude-shade" aria-hidden="true" />
-          <div className="loading-copy">
-          <div className="eyebrow">RiichiLM · {t("入席准备")}</div>
-          <div className="loading-tiles">
-            <Tile tile="E" />
-            <Tile tile="5s" />
-            <Tile tile="7p" />
-          </div>
-          <LoaderCircle className="spin" size={24} />
-          <h2>{t("好牌，值得等一等。")}</h2>
-          <p role="status">{t("正在校验并加载你的对手，准备这场对局。")}</p>
-          <button className="text-button" disabled={pending} onClick={() => void onExit()}>
-            {t("取消并返回")}</button>
-          </div>
-        </div>
+        <LoadingRoom key={table.table_id} cast={cast} spectator={table.spectator} pending={pending} onExit={onExit} />
       ) : table.state === "failed" ? (
         <div className="loading-room">
           <span className="error-symbol">!</span>
@@ -380,7 +429,8 @@ export function Game({
                     <span className="spectator-badge"><Bot size={14} />{t("AI 观战")}</span>
                     <label>
                       <span className="sr-only">{t("观战视角")}</span>
-                      <select aria-label={t("观战视角")} title={t("观战视角")} value={viewer} disabled={busy}
+                      <select aria-label={t("观战视角")} title={t("观战视角")} value={viewer}
+                        disabled={sessionInvalid || !["playing", "round_result"].includes(table.state)}
                         onChange={(e) => onControl("view", Number(e.target.value))}>
                         {observerNames.map((name, seat) => <option key={seat} value={seat}>{t("{seat}视角", { seat: name })}</option>)}
                       </select>
@@ -481,7 +531,10 @@ export function Game({
                     <span className={`seat-avatar portrait-${cast.seats[own.seat]}`} aria-hidden="true">
                       {table.spectator ? <Bot size={17} /> : <UserRound size={17} />}
                     </span>
-                    <strong>{labels[own.seat]}{table.spectator ? t(" · 观战视角") : ""}</strong>
+                    <div className="self-seat-identity">
+                      <strong>{labels[own.seat]}{table.spectator ? t(" · 观战视角") : ""}</strong>
+                      <SeatPolicy table={table} seat={own.seat} />
+                    </div>
                     <b>{own.score.toLocaleString(locale)}</b>
                     {own.dealer && <span className="dealer-label">{t("庄家")}</span>}
                     {own.riichi && <span className="riichi-badge">{t("立直")}</span>}

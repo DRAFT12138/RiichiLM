@@ -7,6 +7,11 @@ export const messages: Record<string, readonly [string, string]> = {
   "音量设置": ["Volume settings", "音量設定"],
   "音效音量": ["Sound volume", "効果音の音量"],
   "入席准备": ["Preparing your table", "対局準備"],
+  "本局角色": ["Characters at this table", "この卓のキャラクター"],
+  "真人": ["Human", "人間"],
+  "{name}的角色立绘": ["{name} character illustration", "{name}の立ち絵"],
+  "暂停立绘轮播": ["Pause character slideshow", "立ち絵の自動切替を一時停止"],
+  "继续立绘轮播": ["Resume character slideshow", "立ち絵の自動切替を再開"],
 
   "自定义权重": ["Custom weights", "カスタム重み"],
   "RiichiLM 官网": ["RiichiLM official website", "RiichiLM 公式サイト"],

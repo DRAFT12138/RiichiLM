@@ -140,13 +140,24 @@ class TableEngine:
         if thinking is not None or self.spectator:
             table["candidates"] = []
             table["window"] = None
-        self.emit(
-            dict(
-                type="snapshot",
-                table=table,
-                timeout=self.decision_timeout if thinking is not None else None,
-            )
+        message = dict(
+            type="snapshot",
+            table=table,
+            timeout=self.decision_timeout if thinking is not None else None,
         )
+        if self.spectator:
+            # Keep seat projections in server-side IPC so viewing never waits
+            # for the worker's synchronous model call. Only one reaches HTTP.
+            message["spectator_views"] = [
+                table | self.bridge.public_table(seat) | dict(
+                    viewer=seat,
+                    candidates=[],
+                    window=None,
+                    decision_notes=[dict(n) for n in self.decision_notes if n["seat"] == seat],
+                )
+                for seat in range(4)
+            ]
+        self.emit(message)
         return table
 
     def _thinking(self, seat):

@@ -58,6 +58,7 @@ class Session:
         self.generation = 0
         self.retired_pages = set()
         self.table = None
+        self.spectator_views = ()
         self.process = self.connection = None
         self.requests = {}
         self.retired_create_ids = set()
@@ -129,6 +130,7 @@ class Session:
             self.connection.close()
         self.process = self.connection = None
         self.pending = self.deadline = None
+        self.spectator_views = ()
 
     def _request(self, request_id, payload):
         require(
@@ -215,9 +217,6 @@ class Session:
             previous = self._request(request_id, payload)
             if previous is not None:
                 return deepcopy(previous)
-            require(
-                self.pending is None and self.connection is not None, "正在处理上一操作"
-            )
             if operation == "action":
                 require(
                     not self.table.get("spectator") and self.table["state"] == "playing"
@@ -246,10 +245,23 @@ class Session:
                     require(self.table["state"] == "playing", "当前不是进行中的牌局")
                 elif control == "view":
                     require(type(value) is int and 0 <= value < 4, "观战席位无效")
+                    require(bool(self.spectator_views), "当前不能控制观战")
+                    # A projection change does not mutate the game, consume a
+                    # worker command, or extend the inference watchdog deadline.
+                    self.table.update(
+                        self.spectator_views[value],
+                        view_version=self.table["view_version"] + 1,
+                    )
+                    result = dict(status="done", request_id=request_id)
+                    self.requests[request_id] = dict(payload=payload, result=result)
+                    return deepcopy(result)
                 elif control == "speed":
                     require(type(value) in (int, float) and math.isfinite(value) and 0.1 <= value <= 5, "播放间隔必须在0.1—5秒之间")
             else:
                 require(False, "未知操作")
+            require(
+                self.pending is None and self.connection is not None, "正在处理上一操作"
+            )
             result = dict(status="processing", request_id=request_id)
             self.requests[request_id] = dict(payload=payload, result=result)
             self.pending = request_id
@@ -288,11 +300,14 @@ class Session:
     def _receive(self, message):
         kind = message["type"]
         if kind == "snapshot":
+            viewer = self.table.get("viewer", 0)
+            self.spectator_views = message.get("spectator_views", ())
+            table = self.spectator_views[viewer] if self.spectator_views else message["table"]
             metadata = {k: self.table[k] for k in ("table_id", "page_id")}
             metadata["command_error"] = self.table.get("command_error")
             version = self.table["view_version"] + 1
             self.table = dict(
-                message["table"],
+                table,
                 **metadata,
                 view_version=version,
                 busy=self.pending is not None,

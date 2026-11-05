@@ -241,6 +241,40 @@ def test_ron_pass_sets_furiten_only_at_atomic_adjudication():
             assert b._session.round_result==dict(kind='win',winners=[2])
 
 
+def test_no_yaku_completion_blocks_other_end_of_wait_until_own_draw():
+    # Open 678p; 1s completes without yaku, while 4s gives tanyao. The missed
+    # 1s still forbids ron on 4s before player2's next draw.
+    waiting=['5m','5m','3p','4p','5p','2s','3s','5s','6s','7s','6p','7p','E']
+    b=rig({2:waiting},drawn='9m',draws=['8p','1s','4s','9p','9s'])
+
+    def pass_responses():
+        if b.is_response_window():
+            respond(b,{})
+
+    play_kind(b,0,'A_DISCARD','9m')
+    pass_responses()
+    play_kind(b,1,'A_DISCARD','8p')
+    respond(b,{2:'A_CHI'})
+    play_kind(b,2,'A_DISCARD','E')
+    pass_responses()
+    assert b._session.ron_available(2,'1s') is False
+    assert b._session.ron_available(2,'4s') is True
+    play_kind(b,3,'A_DISCARD','1s')
+    assert b._native.missed_agari_doujun[2] is True
+    assert b._session.furiten.temp[2] is True
+    pass_responses()
+    play_kind(b,0,'A_DISCARD','4s')
+    assert b._session.ron_available(2,'4s') is False
+    view=b.snapshot(2)
+    assert view is None or all(m.action.kind!='A_RON' for m in view.legal_moves)
+    pass_responses()
+    play_kind(b,1,'A_DISCARD','9p')
+    pass_responses()
+    assert b.snapshot(2) is not None
+    assert b._native.missed_agari_doujun[2] is False
+    assert b._session.furiten.temp[2] is False
+
+
 def test_kakan_keeps_original_stable_pon_reference():
     from riichienv import Phase
     b=rig({1:['5m','5m']},drawn='5m',draws=['2p','3s','4p','5mr'])

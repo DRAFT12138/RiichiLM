@@ -1,7 +1,9 @@
 """Four-seat playback, atomic explanations, viewer isolation and real IPC control."""
 
 from dataclasses import asdict
+from functools import partial
 import json
+import multiprocessing
 import time
 import uuid
 
@@ -127,4 +129,69 @@ def test_real_spawn_paces_pauses_steps_and_rejects_duplicate_control_mutations(t
         with pytest.raises(MahjongError):
             session.submit(page, current["table_id"], "observer-action", "action", window=None, candidate="0")
     finally:
+        session.close()
+
+
+def blocked_inference_worker(connection, config, device, decision_timeout, *, release):
+    """Hold a real decision until the parent explicitly releases the model."""
+    try:
+        engine = TableEngine(config, emit=connection.send, decision_timeout=decision_timeout)
+        engine.loop.on_thinking = lambda seat: engine.publish(thinking=seat)
+        choose = engine.loop.players[0].choose
+
+        def blocked_choose(view, **kwargs):
+            if not release.wait(30):
+                raise RuntimeError("test inference was not released")
+            return choose(view, **kwargs)
+
+        engine.loop.players[0].choose = blocked_choose
+        engine.drive()
+        while True:
+            message = connection.recv()
+            engine.control(message["control"], message.get("value"))
+            connection.send(dict(type="ack", request_id=message["request_id"]))
+    except EOFError:
+        pass
+    finally:
+        connection.close()
+
+
+def test_view_switches_during_blocked_inference_and_pending_pause(tmp_path):
+    release = multiprocessing.get_context("spawn").Event()
+    session = Session(tmp_path, worker=partial(blocked_inference_worker, release=release),
+                      lease_seconds=90, decision_timeout=30)
+    page = uuid.uuid4().hex
+    try:
+        session.init_page(page, session.generation)
+        created = session.create(page, "blocked-create", "single", ["random"] * 4, True)
+        wait_until(lambda: session.snapshot(page).get("thinking") == 0)
+        first = session.snapshot(page)
+        deadline = session.deadline
+        session.submit(page, created["table_id"], "pending-pause", "control", control="pause")
+        for seat in (2, 1, 3, 0, 2):
+            request_id = uuid.uuid4().hex
+            result = session.submit(page, created["table_id"], request_id, "control", control="view", value=seat)
+            current = session.snapshot(page)
+            assert result["status"] == "done" and current["viewer"] == seat
+            assert current["busy"] and session.pending == "pending-pause"
+            assert current["revision"] == first["revision"] and current["thinking"] == 0
+            assert session.deadline == deadline
+            assert current["players"][seat]["hand"] is not None
+            assert all(p["hand"] is None and p["drawn"] is None for p in current["players"] if p["seat"] != seat)
+            assert current["candidates"] == [] and current["window"] is None
+            assert current["decision_notes"] == [] and "spectator_views" not in current
+            assert session.submit(page, created["table_id"], request_id, "control", control="view", value=seat) == result
+            assert session.snapshot(page)["view_version"] == current["view_version"]
+        with pytest.raises(MahjongError):
+            session.submit(page, created["table_id"], "invalid-seat", "control", control="view", value=True)
+        release.set()
+        wait_until(lambda: not session.snapshot(page)["busy"])
+        current = session.snapshot(page)
+        assert current["viewer"] == 2 and current["paused"]
+        assert current["revision"] > first["revision"] and current["thinking"] is None
+        assert current["players"][2]["hand"] is not None
+        assert all(n["seat"] == 2 for n in current["decision_notes"])
+        assert session.deadline is None
+    finally:
+        release.set()
         session.close()
