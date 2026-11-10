@@ -265,6 +265,11 @@ class RiichiDecisionBridge:
         from mahjong.envs.result_selection import select_win_values
         from mahjong.envs.result_constants import NATIVE_YAKUMAN
         session = self._session
+        if group[0]['type'] == 'ryukyoku':
+            # The result adjudicates the last discard response. Publish deferred
+            # reach acceptance/dora before checking abort predicates or reading
+            # balances; four-riichi otherwise still sees only three deposits.
+            self._builder.close_response(group[0], [self._seq])
         scores, kyotaku = session.env.scores(), session.env.riichi_sticks
         if group[0]['type'] == 'hora':
             claims, public_winners = [], []

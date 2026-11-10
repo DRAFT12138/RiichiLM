@@ -174,6 +174,29 @@ def test_riichi_is_one_complete_plan_with_two_consumed_transitions():
         assert 'EV_RIICHI_ACCEPT' not in kinds
 
 
+def test_four_riichi_flushes_last_acceptance_before_abort_validation():
+    hands = {
+        0: ['1m','2m','3m','4m','5m','6m','7m','8m','9m','2p','3p','4p','E'],
+        1: ['1p','2p','3p','4p','5p','6p','7p','8p','9p','2s','3s','4s','S'],
+        2: ['1s','2s','3s','4s','5s','6s','7s','8s','9s','2m','3m','4m','W'],
+        3: ['5m','6m','7m','5p','6p','7p','5s','6s','7s','3m','4m','5m','N'],
+    }
+    b = rig(hands, drawn='P', draws=['F','C','P'])
+    for actor, drawn in enumerate(['P','F','C','P']):
+        view = b.snapshot(actor)
+        move = next(m for m in view.legal_moves if m.action.kind == 'A_RIICHI_DISCARD'
+                    and m.action.args[0].name == 'TILE_' + drawn)
+        result = b.apply(select(b, view, move))
+    assert result.status == 'round_ended'
+    assert b.round_result()['reason'] == 'suucha_riichi'
+    assert b._session.accepted == set(range(4))
+    assert b._session.env.riichi_sticks == 4
+    assert b._session.env.scores() == [24000] * 4
+    assert b.round_result()['score_delta'] == [0] * 4
+    assert sum(e.kind == 'EV_RIICHI_ACCEPT' for e in b._builder.events) == 4
+    assert b.next_round().status == 'advanced'
+
+
 def test_ankan_attempt_open_close_commit_and_rinshan():
     b=rig({0:['1m']*4+['2p','3p','4p','6p','7p','8p','5s','6s','E']},drawn='9s')
     play_kind(b,0,'A_ANKAN')

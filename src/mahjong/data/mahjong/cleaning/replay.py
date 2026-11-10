@@ -11,6 +11,10 @@ from .projection import project_event, project_current_hand, project_header
 from .ir import (UNKNOWN, HIDDEN, PHASES, IRProtocolFailure, check_ir_event,
                  field_origins, to_json, unknown_next_state)
 GIMITE_RESULT = 'gimite-mjai/result-1'
+# Only these facts decide or advance an open response window. Other source
+# facts in the same native transition are retained in order and replayed after
+# the response outcome is known.
+RESPONSE_RESOLVERS = frozenset(('hora', 'ryukyoku', 'chi', 'pon', 'daiminkan', 'tsumo'))
 
 
 class RoundBuilder:
@@ -201,14 +205,16 @@ class RoundBuilder:
         kind=e['type']
         lines=[source_event.raw_line]
         if kind!='end_kyoku':self.session.check_play_phase()
-        if allow_defer and ((kind in ('reach_accepted','dora') and self.pending_window is not None and self.session.pending is None)
-                or (kind=='dora' and self.pending_window is None and self.session.action_actor is not None
+        if allow_defer and (
+                (self.pending_window is not None and kind not in RESPONSE_RESOLVERS)
+                or (kind == 'dora' and self.pending_window is None
+                    and self.session.action_actor is not None
                     and self.session.before_discard_dora_pending())):
-            # No decision anchor can occur between these source facts and the
-            # adjudicating event. Insert CLOSE before the facts only once the
-            # actual call/no-call result is known; never claim an early NO_CALL.
+            # Keep the entire native fact stream ordered. A response is closed
+            # only by an adjudicator; annotations and settlement metadata wait
+            # until its actual outcome is known, then flush in original order.
             require(len(self.deferred_public)<5,'RESOURCE_LIMIT','too many interleaved public facts')
-            if kind=='reach_accepted':
+            if kind == 'reach_accepted':
                 self.session.validate_accept(e)
                 require(not any(p.value['type']=='reach_accepted' for p in self.deferred_public),
                         'INVALID_PHASE','duplicate pending riichi acceptance')

@@ -118,10 +118,14 @@ def test_response_choices_are_all_frozen_before_any_apply_and_forced_pass_is_ski
 def test_failed_or_cancelled_evaluation_has_no_scores_or_silent_random_replacement():
     class FailingPlayer:
         def choose(self, view, **kwargs):
-            raise MahjongError("LLM_DECISION_FAILED", "test failure")
+            raise MahjongError("LLM_DECISION_FAILED", "test failure", 'inference', dict(attempts=2))
     result = run_match(bridge(["llm"] * 4), [FailingPlayer()] * 4, seed=42)
     assert result["status"] == "failed" and result["scores"] is None
     assert result["error"]["code"] == "LLM_DECISION_FAILED"
+    assert result['error']['details'] == dict(attempts=2)
+    assert result['error']['phase'] == 'inference'
+    assert 'test failure' in result['error']['traceback']
+    assert 'MahjongError' in result['error']['traceback']
     result = run_match(bridge(["random"] * 4), [RandomPlayer(i) for i in range(4)], seed=42, cancel=lambda: True)
     assert result["status"] == "cancelled" and result["scores"] is None
     result = run_match(bridge(["random"] * 4), [RandomPlayer(i) for i in range(4)], seed=42, max_windows=1)
@@ -132,7 +136,16 @@ def test_cli_fixed_seed_rotations_report_groups_and_do_not_overwrite(tmp_path):
     output = tmp_path / "arena.json"
     args = SimpleNamespace(players=["random"] * 4, mode="single", device="cpu", llm_config=None,
                            seeds=[42], rotate=True, decision_timeout=10, max_windows=1000, output=str(output))
-    assert evaluate_cli(args) == 0
+    persisted = []
+    def persist_match(outcome, identities):
+        assert not output.exists()  # Callback runs before the final batch report.
+        assert outcome['status'] == 'complete' and len(identities) == 4
+        persisted.append(outcome['rotation'])
+        # The consumer cannot mutate the evaluation's stored match or identities.
+        outcome['status'] = 'failed'
+        identities[0]['kind'] = 'changed'
+    assert evaluate_cli(args, on_match=persist_match) == 0
+    assert persisted == [0, 1, 2, 3]
     report = json.loads(output.read_text())
     assert report["completed_seed_groups"] == 1 and len(report["outcomes"]) == 4
     assert report["failed_matches"] == 0 and report["strength_claim"] is False
@@ -144,13 +157,14 @@ def test_cli_fixed_seed_rotations_report_groups_and_do_not_overwrite(tmp_path):
     assert output.read_bytes() == original
 
 
-def test_incomplete_seed_groups_remain_reported_but_do_not_enter_score_summary(tmp_path):
+def test_incomplete_seed_groups_remain_reported_but_do_not_enter_score_summary(tmp_path, capsys):
     args = SimpleNamespace(players=["random"] * 4, mode="single", device="cpu", llm_config=None,
                            seeds=[42], rotate=True, decision_timeout=10, max_windows=1, output=str(tmp_path / "failed.json"))
     assert evaluate_cli(args) == 1
     report = json.loads((tmp_path / "failed.json").read_text())
     assert report["completed_seed_groups"] == 0 and report["seed_groups"] == []
     assert report["failed_matches"] == 4 and len(report["outcomes"]) == 4
+    assert '对局超过窗口预算' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda:0', marks=pytest.mark.skipif(

@@ -7,6 +7,7 @@ import json
 import math
 from pathlib import Path
 import time
+import traceback
 
 from mahjong.contracts import MahjongError
 from .llm import LLMPlayer, PROMPT_VERSION, SYSTEM_PROMPT, load_llm_configs
@@ -48,16 +49,18 @@ def run_match(bridge, players, *, seed, single_round=False, decision_timeout=120
             windows += 1
     except MahjongError as exc:
         status = "cancelled" if exc.code == "CANCELLED" else "failed"
-        error = dict(code=exc.code, message=exc.message)
+        error = dict(code=exc.code, message=exc.message, phase=exc.phase,
+                     details=deepcopy(exc.details), traceback=traceback.format_exc())
     except Exception as exc:
-        error = dict(code="EVALUATION_FAILED", message=f"评估执行失败（{type(exc).__name__}）")
+        error = dict(code="EVALUATION_FAILED", message=f"评估执行失败（{type(exc).__name__}）",
+                     exception_type=type(exc).__name__, traceback=traceback.format_exc())
     return dict(status=status, error=error, seed=seed, rounds=rounds, windows=windows,
                 seconds=time.monotonic() - started, scores=scores, ranks=ranks,
                 unclaimed_kyotaku=pool, decisions=loop.decisions,
                 llm_stats=[deepcopy(getattr(p, "stats", None)) for p in players])
 
 
-def evaluate_cli(options, *, cancel=None):
+def evaluate_cli(options, *, cancel=None, on_match=None):
     from .bridge import ArenaDecisionBridge, profile_for
     from mahjong.inference.policy import digest
     from mahjong.policy.execution import policy_precision
@@ -134,6 +137,11 @@ def evaluate_cli(options, *, cancel=None):
                            model_sampling_seeds=[p.generator.initial_seed() if isinstance(p, ModelPlayer) else None for p in players])
             outcomes.append(outcome)
             print(f"seed={seed} rotation={rotation} {outcome['status']} windows={outcome['windows']} scores={outcome['scores']}", flush=True)
+            if outcome['error'] is not None:
+                print(json.dumps(dict(seed=seed, rotation=rotation, error=outcome['error']),
+                                 ensure_ascii=False), flush=True)
+            if on_match is not None:
+                on_match(deepcopy(outcome), deepcopy(identities))
             if outcome["status"] == "cancelled":
                 break
         if outcomes[-1]["status"] == "cancelled":
