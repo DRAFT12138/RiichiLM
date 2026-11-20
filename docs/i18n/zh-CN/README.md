@@ -4,7 +4,7 @@
 
 # RiichiLM
 
-[官方网站 · www.riichilm.top](https://www.riichilm.top)
+[官方网站 · www.riichilm.top](https://www.riichilm.top) · [主页源码与托管说明](../../../homepage/README.md#简体中文)
 
 **通过大语言模型与强化学习，让机器学打立直麻将**
 

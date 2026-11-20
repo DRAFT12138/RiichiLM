@@ -4,7 +4,7 @@
 
 # RiichiLM
 
-[公式サイト · www.riichilm.top](https://www.riichilm.top)
+[公式サイト · www.riichilm.top](https://www.riichilm.top) · [ホームページのソースとホスティング](../../../homepage/README.md#日本語)
 
 **大規模言語モデルと強化学習で、機械にリーチ麻雀を教える**
 
