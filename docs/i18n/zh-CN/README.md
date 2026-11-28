@@ -10,7 +10,9 @@
 
 用自己的数据训练麻将策略，通过自我对弈改进模型，再到真实规则的牌桌上观察它的选择。RiichiLM 将 Qwen3 序列模型、Rust 规则引擎、强化学习与插画风浏览器牌桌连接在同一套研究代码中。
 
-> **预训练权重即将开源。** 发布时将在本 README 公布下载地址、权重许可和使用说明。
+> **50 万步预训练基座权重已开源发布于 Hugging Face：[`Draft12138/RiichiLM-Base`](https://huggingface.co/Draft12138/RiichiLM-Base)**（`riichilm-base-500k.pt`，**CC-BY-NC-4.0**，SHA-256 `1ed015d480b90790cd843c871f8162bbaae3019a408c4a082432b7e5e24a9b86`；详情见[50 万步模型卡](model-card-500k.md)）。
+> **后续预告 — 100 万步（1M）基座模型**：当前正继续预训练至 **1,000,000（1M）次优化器更新**（`riichilm-base-1m.pt`），完成后计划在同一 Hugging Face 仓库开源发布。
+> 权重开源仅限上述两个监督预训练基座模型（`500K` 与 `1M`）；后续强化学习（RL）阶段产物（含 RL 策略权重及相关辅助模型）不在开源权重发布范围内，详细 RL 路线与方案暂不公开。
 
 项目用于学习与研究，不分发训练数据、评测数据集或私有牌谱。训练或完整续训需自行提供拥有相应使用权且格式兼容的输入。随机对手无需权重；外接 LLM 使用你自行配置的服务。
 
@@ -122,7 +124,7 @@ uv pip install --python .venv/bin/python --no-deps outputs/wheels/riichienv-*.wh
 
 Web 与 CLI 模型玩家按席位保留前缀 KV，复用相同历史并重算变化的尾部。`--gpu-memory-gib 16` 设置所有模型和席位共享的进程预算，默认16GiB；显存按需分配，实际额度根据空闲显存动态调整并为驱动预留余量。显存紧张时先淘汰较旧的前缀缓存。GPU 预填充每块最多2048 token，保留全部上下文。CPU 忽略 GPU 预算；完整与增量计算的 BF16 舍入可能不同。
 
-自定义 Qwen3 策略权重：将 `.pt`／`.pth` 直接放入 `weights/` 并刷新模型列表，或传入 `--weights-root /path/to/weights`。支持训练 `state.pt`、精简推理文件和裸 `state_dict`，不要求 run 元数据、训练数据或指纹一致；模型张量须与网络结构相容。裸权重默认当前 v2 输入、8192 token 和 RoPE theta 1000000，可通过同名 `.json` 模型配置覆盖。使用 `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` 去掉优化器及恢复状态，保留张量精度和原文件。
+自定义 Qwen3 策略权重：将 `.pt`／`.pth` 直接放入 `weights/` 并刷新模型列表，或传入 `--weights-root /path/to/weights`。如需直接体验已发布的 50 万步基座模型，可从 [Hugging Face](https://huggingface.co/Draft12138/RiichiLM-Base) 下载至 `weights/`（`hf download Draft12138/RiichiLM-Base riichilm-base-500k.pt --local-dir weights`）。支持训练 `state.pt`、精简推理文件和裸 `state_dict`，不要求 run 元数据、训练数据或指纹一致；模型张量须与网络结构相容。裸权重默认当前 v2 输入、8192 token 和 RoPE theta 1000000，可通过同名 `.json` 模型配置覆盖。使用 `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` 去掉优化器及恢复状态，保留张量精度和原文件。
 
 使用 `arena-evaluate` 可在无浏览器环境运行四 AI 对局，玩家支持 `weights:<文件>`、`checkpoint:<目录>`、`llm:<id>` 或 `random`。GPU 模型与 Web 使用相同的 BF16／FlashAttention 路径；同模型多席共享权重、采样 RNG 独立。报告按模型汇总最终点数和净得失点，并列出每席均值，便于比较占多个席位的模型。
 

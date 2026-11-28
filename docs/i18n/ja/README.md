@@ -10,7 +10,9 @@
 
 自分のデータで麻雀の方策を学習し、自己対戦で改良し、実際のルールで動く卓で判断を観察する。RiichiLM は、Qwen3 ベースの系列モデル、Rust ルールエンジン、強化学習、イラスト付きブラウザー対局を一つの研究コードベースにつなぎます。
 
-> **事前学習済み重みを近日中にオープンソース公開する予定です。** 公開時にダウンロード先、重みのライセンス、利用手順をこの README で案内します。
+> **50万ステップ事前学習済みベースモデルの重みを Hugging Face で公開しました：[`Draft12138/RiichiLM-Base`](https://huggingface.co/Draft12138/RiichiLM-Base)**（`riichilm-base-500k.pt`、**CC-BY-NC-4.0**、SHA-256 `1ed015d480b90790cd843c871f8162bbaae3019a408c4a082432b7e5e24a9b86`。詳細は [50 万ステップ モデルカード](model-card-500k.md) を参照してください）。
+> **次回予定 — 100万ステップ（1M）ベースモデル**：現在 **1,000,000（1M）回の optimizer update**（`riichilm-base-1m.pt`）に向けて事前学習を継続しており、完了後に同じ Hugging Face リポジトリでオープン重みとして公開する予定です。
+> オープン重みの公開対象はこの教師あり事前学習ベースモデル 2 点（`500K` と `1M`）のみに限定され、後続の強化学習（RL）段階の成果物（RL 方策重みおよび関連する補助モデル）は公開範囲に含みません。なお、詳細な RL ロードマップおよび設計方針は現時点では公開していません。
 
 学習・研究用です。学習データ、評価データセット、非公開牌譜は配布しません。学習や完全な再開には、適切な利用権を持つ互換入力を用意してください。ランダム対戦相手に重みは不要で、外部 LLM は利用者が設定したサービスを使います。
 
@@ -122,7 +124,7 @@ GPU でモデルを使う場合は `--device cuda:0` を指定します（ROCm �
 
 Web と CLI のモデルプレイヤーは席ごとに prefix KV を保持し、一致する履歴を再利用して変化した末尾を再計算します。`--gpu-memory-gib 16` は全モデル・全席で共有するプロセス予算で、既定値は16GiBです。必要に応じて割り当て、空き VRAM とドライバー用の余裕に合わせて上限を調整し、逼迫時は古いキャッシュから破棄します。GPU の prefill は最大2048 tokenずつ処理し、コンテキスト全体を保持します。CPU は GPU 予算を使用しません。全体計算と増分計算では BF16 の丸めが異なる場合があります。
 
-自前の Qwen3 方策重みは `.pt`／`.pth` を `weights/` に置いてモデル一覧を更新するか、`--weights-root /path/to/weights` で指定します。学習用 `state.pt`、推論用エクスポート、裸の `state_dict` に対応し、run メタデータ・学習データ・指紋の一致を要求しません。テンソルとネットワーク構造の互換性は必要です。裸の重みは現在の v2 入力、8192 token、RoPE theta 1000000 を既定とし、同名の `.json` モデル設定で変更できます。`.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` で optimizer と復帰状態を除去し、テンソル精度と元ファイルを保持します。
+自前の Qwen3 方策重みは `.pt`／`.pth` を `weights/` に置いてモデル一覧を更新するか、`--weights-root /path/to/weights` で指定します。公開済みの 50 万ステップベースモデルを試す場合は、[Hugging Face](https://huggingface.co/Draft12138/RiichiLM-Base) から `weights/` にダウンロードしてください（`hf download Draft12138/RiichiLM-Base riichilm-base-500k.pt --local-dir weights`）。学習用 `state.pt`、推論用エクスポート、裸の `state_dict` に対応し、run メタデータ・学習データ・指紋の一致を要求しません。テンソルとネットワーク構造の互換性は必要です。裸の重みは現在の v2 入力、8192 token、RoPE theta 1000000 を既定とし、同名の `.json` モデル設定で変更できます。`.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` で optimizer と復帰状態を除去し、テンソル精度と元ファイルを保持します。
 
 `arena-evaluate` でブラウザーを使わずに四 AI 対局を実行できます。プレイヤーは `weights:<ファイル>`、`checkpoint:<ディレクトリ>`、`llm:<id>`、`random` に対応します。GPU モデルは Web と同じ BF16／FlashAttention を使い、同一モデルの複数席は重みを共有し、サンプリング RNG は独立します。レポートはモデル別に最終点数と純増減を集計し、複数席のモデルを比較するための一席あたり平均も記録します。
 

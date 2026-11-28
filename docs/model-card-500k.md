@@ -15,6 +15,14 @@
 
 This checkpoint is a task-specific Riichi Mahjong policy model. It is not a general-purpose chat model.
 
+## Release & Download
+
+- **Hugging Face repository**: [`Draft12138/RiichiLM-Base`](https://huggingface.co/Draft12138/RiichiLM-Base) (released 2026-11-28)
+- **Weight file**: `riichilm-base-500k.pt` (FP32, 409,112,985 bytes / ~390 MiB, with sidecar `riichilm-base-500k.json` and `SHA256SUMS.txt`)
+- **SHA-256**: `1ed015d480b90790cd843c871f8162bbaae3019a408c4a082432b7e5e24a9b86`
+- **Weights license**: **CC-BY-NC-4.0** (codebase remains Apache-2.0)
+- **Open-weight scope**: Open-weight releases are limited to this `500K` base checkpoint and the planned `1M` base checkpoint (`riichilm-base-1m.pt`). Subsequent RL-stage artifacts (RL policy weights and related auxiliary models) are not released as open weights, while RL training and evaluation code remains open source.
+
 ## Training volume
 
 The corpus snapshot recorded on 2026-10-24 contained 4,585,517 games, 2,439,932,818 supervised actions, and 9,024,927,373 supervised target tokens.
@@ -40,7 +48,7 @@ Use this model for Riichi Mahjong policy inference in the project’s compatible
 
 ## Limitations
 
-The model’s behavior reflects the coverage and biases of the training records and preprocessing. Its outputs should be consumed with the matching legal-action constraints and game-state implementation. This model card describes the training run and architecture; it does not include model weights or training data.
+The model’s behavior reflects the coverage and biases of the training records and preprocessing. Its outputs should be consumed with the matching legal-action constraints and game-state implementation. Standalone inference weights (`riichilm-base-500k.pt`) are distributed on Hugging Face under CC-BY-NC-4.0; training data, evaluation datasets, optimizer states, RNG states, and data cursors are not distributed.
 
 ## Record dates
 
