@@ -10,9 +10,13 @@
 
 Build a Mahjong policy, train it on your own data, improve it through self-play, and watch its decisions at a real table. RiichiLM connects Qwen3-based sequence models, a Rust rules engine, reinforcement learning, and an illustrated browser arena in one research codebase.
 
-> **Pretrained 500K base weights are now available on Hugging Face: [`Draft12138/RiichiLM-Base`](https://huggingface.co/Draft12138/RiichiLM-Base)** (`riichilm-base-500k.pt`, **CC-BY-NC-4.0**, SHA-256 `1ed015d480b90790cd843c871f8162bbaae3019a408c4a082432b7e5e24a9b86`; see the [500K model card](docs/model-card-500k.md)).
-> **Coming next — 1M-step base model**: Pretraining is actively continuing toward **1,000,000 (1M) optimizer updates** (`riichilm-base-1m.pt`), planned for open-weight release in the same Hugging Face repository upon completion.
-> Open-weight releases are limited to these two supervised pretrained base models (`500K` and `1M`); subsequent RL-stage artifacts (RL policy weights and related auxiliary models) will not be released as open weights, and detailed RL roadmap/design plans are not publicly disclosed at this time.
+> ### 🎉 RiichiLM-Base 500K Pretrained Weights Are Now Open Source!
+>
+> 🎉 **Download on Hugging Face: [`Draft12138/RiichiLM-Base`](https://huggingface.co/Draft12138/RiichiLM-Base)** (`riichilm-base-500k.pt`, **CC-BY-NC-4.0**, SHA-256 `1ed015d480b90790cd843c871f8162bbaae3019a408c4a082432b7e5e24a9b86`; see the [500K model card](docs/model-card-500k.md)).
+>
+> 🚀 **Coming next — 1M-step base model**: Pretraining is actively continuing toward **1,000,000 (1M) optimizer updates** (`riichilm-base-1m.pt`), planned for open-weight release in the same Hugging Face repository upon completion.
+>
+> 📌 **Open-weight scope**: Releases are limited to these two supervised pretrained base models (`500K` and `1M`); subsequent RL-stage artifacts (RL policy weights and related auxiliary models) will not be released as open weights, and detailed RL roadmap/design plans are not publicly disclosed at this time.
 
 For learning and research. Training data, evaluation datasets, and private game records are not distributed. To train or fully resume a run, supply appropriately licensed, compatible inputs. Random opponents work without weights; external LLM players use a service you configure.
 
@@ -26,18 +30,18 @@ For learning and research. Training data, evaluation datasets, and private game 
 | **Reuse shared context** | Up to eight decisions share a training trunk within the same round and view. Eligible GPU BF16 runs use compiled layers, fused Adam, merged projections, and CPU lookahead. |
 | **Train on one GPU** | The default 101.48M-parameter model trains on a single GPU. A measured BF16 training sample peaked at 4.12 GiB allocated / 6.45 GiB reserved; see the reference setup and throughput below. |
 | **Resume the actual run** | Checkpoints retain model, optimizer, RNG, progress, and data cursor. RL supports READY/PREPARED round boundaries and recomputation of interrupted work. |
-| **See the policy play** | React/TypeScript arena for human vs AI and four-AI spectating. Mix your local NTP checkpoints, external LLMs, and random players independently by seat. |
-| **An arena in three languages** | English, Simplified Chinese, and Japanese; browser-language selection, a persistent manual switch, pause, step, speed, and viewing-seat controls. |
+| **See the policy play** | Kyoto dark-lacquer & jade React/TypeScript arena for human vs AI and four-AI spectating. Mix local NTP checkpoints, custom `.pt` weights, external LLMs, and random players independently per seat or fill all seats at once, with live mini-table preview, turn sounds, and GPU/CPU device status. |
+| **An arena in three languages** | English, Simplified Chinese, and Japanese with persistent manual switching, plus dora glints, last-discard highlight, tsumogiri contrast, relative sideways melds, score-diff view (`D` or click center plate), hover tile counts (`x/4`), call cut-in banners, and full keyboard/spectator controls. |
 
 ## A look at the arena
 
 ![RiichiLM lobby](assets/screenshots/lobby-en.png)
 
-Choose a single round, East-only game, or hanchan. Illustrated characters are cosmetic; policies are selected independently. No account is needed for the local arena.
+Choose a single round, East-only game, or hanchan, switch between playing as East or watching four AIs, preview the mini table, and assign policies per seat or across all seats. Illustrated characters are cosmetic; policies are selected independently, and no account is needed for the local arena.
 
 ![RiichiLM AI spectator table](assets/screenshots/spectator-en.png)
 
-Watch committed moves, legal-choice counts, sampling probabilities, and short summaries when supplied by an LLM. Summaries are model output, not an internal reasoning trace. A human player does not receive opponents' summaries. These screenshots use random opponents; they do not demonstrate trained playing strength.
+Watch committed moves on a tactile felt table with pause/step/speed/viewing-seat controls, legal-choice counts, sampling probability bars, and short summaries when supplied by an LLM. Summaries are model output, not an internal reasoning trace. A human player does not receive opponents' summaries. These screenshots use random opponents; they do not demonstrate trained playing strength.
 
 ## Train with your own inputs
 

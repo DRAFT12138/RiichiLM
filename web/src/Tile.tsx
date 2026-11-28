@@ -1,4 +1,5 @@
 import { useI18n, type Translator } from "./i18n";
+
 const artwork = import.meta.glob<string>("./assets/tiles/*.svg", {
   eager: true,
   query: "?url",
@@ -22,19 +23,25 @@ export const tileArtwork = (tile: string) => {
   const family = { m: "Man", p: "Pin", s: "Sou" }[suit];
   return image(`${family}${rank}${red && rank === "5" ? "-Dora" : ""}`);
 };
-const tileName = (tile: string | undefined, t: Translator, locale: string) => {
+export const tileName = (tile: string | undefined, t: Translator, locale: string) => {
   if (!tile) return undefined;
   const honorNames: Record<string, string> = { E: "东", S: "南", W: "西", N: "北", P: "白", F: "发", C: "中" };
   if (honorNames[tile]) return t(honorNames[tile]);
   const match = /^([1-9])([mps])(r?)$/.exec(tile);
   if (!match) return tile;
   const [, rank, suit, red] = match;
-  return t("{red}{rank}{suit}", { red: red ? t("赤") : "", rank: locale === "en" ? rank : "一二三四五六七八九"[Number(rank) - 1], suit: t({ m: "万", p: "筒", s: "索" }[suit]!) });
+  return t("{red}{rank}{suit}", {
+    red: red ? t("赤") : "",
+    rank: locale === "en" ? rank : "一二三四五六七八九"[Number(rank) - 1],
+    suit: t({ m: "万", p: "筒", s: "索" }[suit]!),
+  });
 };
 export function Tile({
   tile,
   small = false,
   back = false,
+  dora = false,
+  sideways = false,
   onClick,
   onPreview,
   disabled = false,
@@ -44,6 +51,8 @@ export function Tile({
   tile?: string;
   small?: boolean;
   back?: boolean;
+  dora?: boolean;
+  sideways?: boolean;
   onClick?: () => void;
   onPreview?: (tile: string | null) => void;
   disabled?: boolean;
@@ -55,6 +64,8 @@ export function Tile({
     "tile",
     small && "small",
     back && "back",
+    dora && !back && "dora",
+    sideways && "sideways",
     selected && "selected",
     dim && "dim",
     tile?.endsWith("r") && "aka",
@@ -77,6 +88,7 @@ export function Tile({
           draggable={false}
         />
       )}
+      {!back && dora && <span className="tile-dora-glint" aria-hidden="true" />}
     </>
   );
   const label = back ? t("暗牌") : onClick ? t("打出 {tile}", { tile: tile || "" }) : tile;
@@ -97,7 +109,12 @@ export function Tile({
       {face}
     </button>
   ) : (
-    <span className={className} aria-label={label} aria-description={back ? undefined : tileName(tile, t, locale)} title={back ? undefined : tileName(tile, t, locale)}>
+    <span
+      className={className}
+      aria-label={label}
+      aria-description={back ? undefined : tileName(tile, t, locale)}
+      title={back ? undefined : tileName(tile, t, locale)}
+    >
       {face}
     </span>
   );

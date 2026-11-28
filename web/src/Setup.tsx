@@ -17,6 +17,7 @@ import type { Catalog, Mode, SetupConfig } from "./types";
 import { useLabels } from "./labels";
 import type { Cast } from "./cast";
 import { characterNames } from "./cast";
+
 export function Setup({
   catalog,
   refresh,
@@ -46,6 +47,7 @@ export function Setup({
   const configLocked = pending || createUncertain;
   const [query, setQuery] = useState(""),
     [showRuns, setShowRuns] = useState(false);
+
   const checkpoints = useMemo(
     () =>
       catalog.runs.flatMap((run) =>
@@ -75,15 +77,29 @@ export function Setup({
       return [cp.id, `${label}${counts.get(label)! > 1 ? ` · ${cp.id}` : ""}${!cp.selectable ? ` · ${t(cp.status)}` : ""}`];
     }));
   }, [checkpoints, t, locale]);
+
   const seats = spectator ? [primary, ...opponents] : opponents;
   const seatLabels = spectator ? observerNames : names.slice(1);
   const invalidSeat = seats.findIndex((id) => id !== "random" &&
-    !selectable.some((c) => c.id === id) && !catalog.llms?.some((c) => c.id === id));
+    !selectable.some((c) => c.id === id) &&
+    !catalog.llms?.some((c) => c.id === id));
+
   function setSeat(index: number, value: string) {
     setConfig((old) => old.spectator && index === 0
       ? { ...old, primary: value }
       : { ...old, opponents: old.opponents.map((o, j) => j === index - (old.spectator ? 1 : 0) ? value : o) });
   }
+
+  function assignAllSeats(value: string) {
+    setConfig((old) => ({
+      ...old,
+      primary: old.spectator ? value : old.primary,
+      opponents: old.opponents.map(() => value),
+    }));
+  }
+
+  const miniWinds = [t("东"), t("南"), t("西"), t("北")];
+
   return (
     <>
       <section className="welcome">
@@ -92,11 +108,13 @@ export function Setup({
           <h1>{t("让机器学打麻将。")}</h1>
           <p>
             {t("大语言模型 · 监督学习 · 强化学习")}<br />
-            {t("带上自训模型或外接 LLM，对局或观战。")}</p>
+            {t("带上自训模型或外接 LLM，对局或观战。")}
+          </p>
           <div className="welcome-tags">
             <span>
               <span className="status-dot" />
-              {t("本地运行")}</span>
+              {t("本地运行")}
+            </span>
             <span>{t("四人立直麻将")}</span>
             <span>{t("仅供学习与研究")}</span>
           </div>
@@ -108,143 +126,166 @@ export function Setup({
           <span className="welcome-art-label">{t(characterNames[cast.host])} <b>✦</b> {t("牌馆向导")}</span>
         </div>
       </section>
+
       <div className="setup-layout">
-      <div className="setup-options">
-      <div className="section-heading">
-        <div>
-          <span className="section-ornament">{t("一")}</span>
-          <h2>{t("选择你的牌局")}</h2>
-        </div>
-        <span>{t("按自己的节奏，开始一场对局")}</span>
-      </div>
-      <div className="mode-grid">
-        {(Object.entries(modes) as [Mode, (typeof modes)[Mode]][]).map(
-          ([key, value], i) => (
-            <button
-              key={key}
-              className={`mode-card ${mode === key ? "chosen" : ""}`}
-              onClick={() => setConfig((old) => ({ ...old, mode: key }))}
-              disabled={configLocked}
-              aria-pressed={mode === key}
-            >
-              <div className="mode-card-top">
-                <span className="mode-icon">
-                  {i === 0 ? (
-                    <Layers3 size={22} />
-                  ) : i === 1 ? (
-                    <Wind size={24} />
-                  ) : (
-                    <Sparkles size={22} />
-                  )}
-                </span>
-                <span className="radio-check">
-                  {mode === key && <Check size={13} />}
-                </span>
-              </div>
-              <div className="mode-title">
-                {value.name}
-                <small>{value.tag}</small>
-              </div>
-              <p>{value.desc}</p>
+        <div className="setup-options">
+          <div className="section-heading">
+            <div>
+              <span className="section-ornament">{t("一")}</span>
+              <h2>{t("选择你的牌局")}</h2>
+            </div>
+            <span>{t("按自己的节奏，开始一场对局")}</span>
+          </div>
+          <div className="mode-grid">
+            {(Object.entries(modes) as [Mode, (typeof modes)[Mode]][]).map(
+              ([key, value], i) => (
+                <button
+                  key={key}
+                  className={`mode-card ${mode === key ? "chosen" : ""}`}
+                  onClick={() => setConfig((old) => ({ ...old, mode: key }))}
+                  disabled={configLocked}
+                  aria-pressed={mode === key}
+                >
+                  <div className="mode-card-top">
+                    <span className="mode-icon">
+                      {i === 0 ? (
+                        <Layers3 size={20} />
+                      ) : i === 1 ? (
+                        <Wind size={22} />
+                      ) : (
+                        <Sparkles size={20} />
+                      )}
+                    </span>
+                    <span className="radio-check">
+                      {mode === key && <Check size={12} />}
+                    </span>
+                  </div>
+                  <div className="mode-title">
+                    {value.name}
+                    <small>{value.tag}</small>
+                  </div>
+                  <p>{value.desc}</p>
+                </button>
+              ),
+            )}
+          </div>
+
+          <div className="section-heading opponent-heading">
+            <div>
+              <span className="section-ornament">{t("二")}</span>
+              <h2>{t("落座席位")}</h2>
+            </div>
+            <button type="button" className="shuffle-cast" disabled={configLocked} onClick={shuffleCast}>
+              <Shuffle size={14} /> {t("换一批角色")}
             </button>
-          ),
-        )}
-      </div>
-      <div className="section-heading opponent-heading">
-        <div>
-          <span className="section-ornament">{t("二")}</span>
-          <h2>{t("落座席位")}</h2>
-        </div>
-        <button type="button" className="shuffle-cast" disabled={configLocked} onClick={shuffleCast}>
-          <Shuffle size={14} /> {t("换一批角色")}</button>
-      </div>
-      <div className="play-mode-switch" aria-label={t("参与方式")}>
-        <button type="button" aria-pressed={!spectator} disabled={configLocked} onClick={() => setConfig((old) => ({ ...old, spectator: false }))}>{t("真人对战")}</button>
-        <button type="button" aria-pressed={spectator} disabled={configLocked} onClick={() => setConfig((old) => ({ ...old, spectator: true }))}>{t("纯 AI 观战")}</button>
-      </div>
-      <div className={`opponent-grid ${spectator ? "spectator-grid" : ""}`}>
-        {seats.map((value, i) => (
-          <section className="opponent-card" data-seat={spectator ? i : i + 1} key={i}>
-            <div className="opponent-top">
-              <span className={`bot-icon portrait-${cast.seats[spectator ? i : i + 1]}`} aria-hidden="true">
-                <Bot size={23} />
-              </span>
-              <div>
-                <strong>{seatLabels[i]}</strong>
-                <small>{t(characterNames[cast.seats[spectator ? i : i + 1]])} · {spectator ? t("AI席位") : [t("右侧"), t("对面"), t("左侧")][i]}</small>
-              </div>
-              <span className="seat-marker">{(spectator ? [t("东"), t("南"), t("西"), t("北")] : [t("南"), t("西"), t("北")])[i]}</span>
-            </div>
-            <label htmlFor={`opponent-${i}`}>{t("{seat}策略", { seat: seatLabels[i] })}</label>
-            <div className="select-wrap">
-              <Shuffle size={15} />
-              <select
-                id={`opponent-${i}`}
-                value={value}
-                disabled={configLocked}
-                title={checkpointLabels.get(value) || (value === "random" ? t("纯随机策略") : catalog.llms?.find((llm) => llm.id === value)?.name || t("所选策略不可用"))}
-                onChange={(e) =>
-                  setSeat(i, e.target.value)
-                }
-              >
-                {value !== "random" && !selectable.some((c) => c.id === value) && !catalog.llms?.some((c) => c.id === value) && (
-                  <option value={value} disabled>{t("已不可用，请重新选择")}</option>
-                )}
-                <option value="random">{t("纯随机策略")}</option>
-                {!!catalog.llms?.length && <optgroup label={t("通用 LLM")}>{catalog.llms.map((llm) => (
-                  <option key={llm.id} value={llm.id}>
-                    LLM · {llm.name} · {llm.model}
-                  </option>
-                ))}</optgroup>}
-                {!!checkpoints.length && <optgroup label={t("训练模型")}>{checkpoints.map((cp) => (
-                  <option key={cp.id} value={cp.id} disabled={!cp.selectable}>
-                    {checkpointLabels.get(cp.id)}
-                  </option>
-                ))}</optgroup>}
-              </select>
-              <ChevronDown size={14} />
-            </div>
-            <p className="opponent-note">
-              {value === "random"
-                ? t("从完整合法动作中等概率选择")
-                : value.startsWith("llm:")
-                  ? t("通用 LLM · {name}", { name: catalog.llms?.find((c) => c.id === value)?.name || t("请刷新重选") })
-                : t("已选固定模型 · {step} 步", { step: checkpoints.find((c) => c.id === value)?.step.toLocaleString(locale) || t("请刷新重选") })}
-            </p>
-          </section>
-        ))}
-      </div>
-      </div>
-      <div className="launch-panel">
-        <div className="launch-tip">
-          <div className="launch-symbol">{t("東")}</div>
-          <div>
-            <strong>{spectator ? t("四家就位，静候开局。") : t("东家，等你入席。")}</strong>
-            <p>{spectator ? t("四席自动对战 · 可暂停、单步与查看AI决策说明") : t("真人起始东家 · 对局仅保留在当前页面，退出后重新开始")}</p>
+          </div>
+          <div className="play-mode-switch" aria-label={t("参与方式")}>
+            <button type="button" aria-pressed={!spectator} disabled={configLocked} onClick={() => setConfig((old) => ({ ...old, spectator: false }))}>{t("真人对战")}</button>
+            <button type="button" aria-pressed={spectator} disabled={configLocked} onClick={() => setConfig((old) => ({ ...old, spectator: true }))}>{t("纯 AI 观战")}</button>
+          </div>
+          <div className={`opponent-grid ${spectator ? "spectator-grid" : ""}`}>
+            {seats.map((value, i) => (
+              <section className="opponent-card" data-seat={spectator ? i : i + 1} key={i}>
+                <div className="opponent-top">
+                  <span className={`bot-icon portrait-${cast.seats[spectator ? i : i + 1]}`} aria-hidden="true">
+                    <Bot size={20} />
+                  </span>
+                  <div>
+                    <strong>{seatLabels[i]}</strong>
+                    <small>{t(characterNames[cast.seats[spectator ? i : i + 1]])} · {spectator ? t("AI席位") : [t("右侧"), t("对面"), t("左侧")][i]}</small>
+                  </div>
+                  <span className="seat-marker">{(spectator ? [t("东"), t("南"), t("西"), t("北")] : [t("南"), t("西"), t("北")])[i]}</span>
+                </div>
+                <label htmlFor={`opponent-${i}`}>{t("{seat}策略", { seat: seatLabels[i] })}</label>
+                <div className="select-wrap">
+                  <Shuffle size={14} />
+                  <select
+                    id={`opponent-${i}`}
+                    value={value}
+                    disabled={configLocked}
+                    title={checkpointLabels.get(value) || (value === "random" ? t("纯随机策略") : catalog.llms?.find((llm) => llm.id === value)?.name || t("所选策略不可用"))}
+                    onChange={(e) => setSeat(i, e.target.value)}
+                  >
+                    {value !== "random" && !selectable.some((c) => c.id === value) && !catalog.llms?.some((c) => c.id === value) && (
+                      <option value={value} disabled>{t("已不可用，请重新选择")}</option>
+                    )}
+                    <option value="random">{t("纯随机策略")}</option>
+                    {!!catalog.llms?.length && <optgroup label={t("通用 LLM")}>{catalog.llms.map((llm) => (
+                      <option key={llm.id} value={llm.id}>
+                        LLM · {llm.name} · {llm.model}
+                      </option>
+                    ))}</optgroup>}
+                    {!!checkpoints.length && <optgroup label={t("训练模型")}>{checkpoints.map((cp) => (
+                      <option key={cp.id} value={cp.id} disabled={!cp.selectable}>
+                        {checkpointLabels.get(cp.id)}
+                      </option>
+                    ))}</optgroup>}
+                  </select>
+                  <ChevronDown size={14} />
+                </div>
+                <p className="opponent-note">
+                  {value === "random"
+                    ? t("从完整合法动作中等概率选择")
+                    : value.startsWith("llm:")
+                      ? t("通用 LLM · {name}", { name: catalog.llms?.find((c) => c.id === value)?.name || t("请刷新重选") })
+                        : t("已选固定模型 · {step} 步", { step: checkpoints.find((c) => c.id === value)?.step.toLocaleString(locale) || t("请刷新重选") })}
+                </p>
+              </section>
+            ))}
           </div>
         </div>
-        <div className="launch-summary" aria-label={t("牌局配置摘要")}>
-          <div><span>{t("赛制")}</span><strong>{modes[mode].name}</strong></div>
-          <div><span>{t("参与方式")}</span><strong>{spectator ? t("纯 AI 观战") : t("真人对战")}</strong></div>
-          <div><span>{t("AI 席位")}</span><strong>{seats.length} {t("席")}</strong></div>
+
+        <div className="launch-panel">
+          <div className="launch-tip">
+            <div className="launch-symbol">{t("東")}</div>
+            <div>
+              <strong>{spectator ? t("四家就位，静候开局。") : t("东家，等你入席。")}</strong>
+              <p>{spectator ? t("四席自动对战 · 可暂停、单步与查看AI决策说明") : t("真人起始东家 · 对局仅保留在当前页面，退出后重新开始")}</p>
+            </div>
+          </div>
+
+          <div className="mini-table-preview" aria-label={t("对局桌面预览")}>
+            <div className="mini-felt">
+              <span className="mini-seat mini-seat-2" title={t(characterNames[cast.seats[2]])}>
+                <i className={`mini-portrait portrait-${cast.seats[2]}`} />
+                <b>{miniWinds[2]}</b>
+              </span>
+              <span className="mini-seat mini-seat-3" title={t(characterNames[cast.seats[3]])}>
+                <i className={`mini-portrait portrait-${cast.seats[3]}`} />
+                <b>{miniWinds[3]}</b>
+              </span>
+              <span className="mini-center-emblem">雀</span>
+              <span className="mini-seat mini-seat-1" title={t(characterNames[cast.seats[1]])}>
+                <i className={`mini-portrait portrait-${cast.seats[1]}`} />
+                <b>{miniWinds[1]}</b>
+              </span>
+              <span className="mini-seat mini-seat-0" title={spectator ? t(characterNames[cast.seats[0]]) : t("你")}>
+                <i className={`mini-portrait portrait-${cast.seats[0]}`} />
+                <b>{miniWinds[0]}</b>
+              </span>
+            </div>
+          </div>
+
+          <div className="launch-summary" aria-label={t("牌局配置摘要")}>
+            <div><span>{t("赛制")}</span><strong>{modes[mode].name}</strong></div>
+            <div><span>{t("参与方式")}</span><strong>{spectator ? t("纯 AI 观战") : t("真人对战")}</strong></div>
+            <div><span>{t("AI 席位")}</span><strong>{seats.length} {t("席")}</strong></div>
+          </div>
+
+          {ready && invalidSeat !== -1 && (
+            <p className="launch-error" role="status">{t("{seat}所选策略已不可用，请重新选择。", { seat: seatLabels[invalidSeat] })}</p>
+          )}
+          <button
+            className="button primary start-button"
+            disabled={!ready || pending || invalidSeat !== -1}
+            onClick={() => start(mode, seats, spectator)}
+          >
+            {pending ? t("正在处理…") : !ready ? t("连接牌馆中…") : createUncertain ? t("重试确认开局") : spectator ? t("开始观战") : t("开始对局")}
+            <ArrowRight size={18} />
+          </button>
         </div>
-        {ready && invalidSeat !== -1 && (
-          <p className="launch-error" role="status">{t("{seat}所选策略已不可用，请重新选择。", { seat: seatLabels[invalidSeat] })}</p>
-        )}
-        <button
-          className="button primary start-button"
-          disabled={
-            !ready ||
-            pending ||
-            invalidSeat !== -1
-          }
-          onClick={() => start(mode, seats, spectator)}
-        >
-          {pending ? t("正在处理…") : !ready ? t("连接牌馆中…") : createUncertain ? t("重试确认开局") : spectator ? t("开始观战") : t("开始对局")}
-          <ArrowRight size={18} />
-        </button>
       </div>
-      </div>
+
       <section className="library-panel">
         <div className="section-heading">
           <div>
@@ -318,13 +359,20 @@ export function Setup({
                               aria-pressed={seats[i] === cp.id}
                               key={n}
                               disabled={!cp.selectable || configLocked}
-                              onClick={() =>
-                                setSeat(i, cp.id)
-                              }
+                              onClick={() => setSeat(i, cp.id)}
                             >
                               {t("选为")}{n}
                             </button>
                           ))}
+                          <button
+                            className="button subtle assign-all"
+                            aria-pressed={seats.every((s) => s === cp.id)}
+                            title={t("全席设为该模型")}
+                            disabled={!cp.selectable || configLocked}
+                            onClick={() => assignAllSeats(cp.id)}
+                          >
+                            {t("全席")}
+                          </button>
                         </div>
                       </div>
                     ))
@@ -343,7 +391,8 @@ export function Setup({
                       {a.source_checkpoint && (
                         <small title={a.source_checkpoint?.run_id}>
                           {t("恢复自")}{a.source_checkpoint?.checkpoint_id} ·{" "}
-                          {a.source_checkpoint?.global_step} {t("步")}</small>
+                          {a.source_checkpoint?.global_step} {t("步")}
+                        </small>
                       )}
                     </div>
                   ))}

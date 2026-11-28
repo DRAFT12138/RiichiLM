@@ -301,11 +301,11 @@ export function App() {
               </span>
               <button
                 className="header-library"
-                onClick={() =>
+                onClick={() => {
                   document
                     .querySelector(".library-panel")
-                    ?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })
-                }
+                    ?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+                }}
               >
                 {t("模型与训练")}<ArrowUpRight size={14} />
               </button>

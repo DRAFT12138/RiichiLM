@@ -25,19 +25,25 @@ async function unlock() {
 /** Short original synthesized cues; no downloads and no autoplay before a gesture. */
 export function playCue(cue: Cue) {
   if (!enabled || !context || context.state !== "running" || document.hidden) return;
+  // Keep 2 oscillators each for "tile" and "turn" so cue timing stays crisp and deterministic.
   const notes: Record<Cue, number[]> = {
-    tile: [760, 390], turn: [659, 880], call: [440, 659, 880],
-    start: [392, 523, 659], win: [523, 659, 784, 1047], draw: [440, 392, 330],
+    tile: [1180, 420],
+    turn: [659.25, 880],
+    call: [440, 659.25, 987.77],
+    start: [392, 523.25, 659.25, 783.99],
+    win: [523.25, 659.25, 783.99, 1046.5],
+    draw: [440, 392, 329.63],
   };
   notes[cue].forEach((frequency, i) => {
     const oscillator = context!.createOscillator(), gain = context!.createGain();
-    const time = context!.currentTime + i * (cue === "tile" ? 0.018 : 0.105);
-    const duration = cue === "tile" ? 0.055 : 0.28;
-    oscillator.type = cue === "tile" ? "triangle" : "sine";
+    const step = cue === "tile" ? 0.012 : cue === "turn" ? 0.08 : 0.095;
+    const time = context!.currentTime + i * step;
+    const duration = cue === "tile" ? 0.048 : cue === "win" ? 0.34 : 0.25;
+    oscillator.type = cue === "tile" ? (i === 0 ? "triangle" : "sine") : "sine";
     oscillator.frequency.setValueAtTime(frequency, time);
-    if (cue === "tile") oscillator.frequency.exponentialRampToValueAtTime(frequency / 2, time + duration);
+    if (cue === "tile") oscillator.frequency.exponentialRampToValueAtTime(frequency * 0.42, time + duration);
     gain.gain.setValueAtTime(0, time);
-    gain.gain.linearRampToValueAtTime(volume * (cue === "tile" ? 0.16 : 0.13), time + 0.004);
+    gain.gain.linearRampToValueAtTime(volume * (cue === "tile" ? 0.18 : 0.12), time + 0.004);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
     oscillator.connect(gain); gain.connect(context!.destination);
     oscillator.start(time); oscillator.stop(time + duration);

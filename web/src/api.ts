@@ -1,4 +1,10 @@
-import type { Candidate, Catalog, Mode, Table, SpectatorControl } from "./types";
+import type {
+  Candidate,
+  Catalog,
+  Mode,
+  SpectatorControl,
+  Table,
+} from "./types";
 export const pageId = crypto.randomUUID();
 let token = "";
 let bootstrapPromise: Promise<void> | undefined;
