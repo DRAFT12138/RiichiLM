@@ -284,7 +284,6 @@ function LoadingRoom({ cast, spectator, pending, onExit }: {
   return (
     <section className="loading-screen" aria-label={t("入席准备")}>
       <div className="loading-room illustrated-loading">
-        <div className="interlude-shade" aria-hidden="true" />
         <div className="loading-character-art">
           {cast.seats.map((character, index) => (
             <img key={character} className={seat === index ? "is-active" : ""}
@@ -722,11 +721,7 @@ export function Game({
                     </div>
                   )}
 
-                  <div className="table-emblem" aria-hidden="true">雀</div>
-                  <div className="felt-corner tl" />
-                  <div className="felt-corner tr" />
-                  <div className="felt-corner bl" />
-                  <div className="felt-corner br" />
+                  <div className="felt-rail" aria-hidden="true" />
 
                   {table.players!.filter((p) => p.seat !== viewer).map((p) => (
                     <Opponent
@@ -993,7 +988,6 @@ export function Game({
                       </div>
                     </div>
                   </div>
-                  <div className="table-watermark">RiichiLM</div>
                 </div>
               </div>
 
@@ -1012,13 +1006,13 @@ export function Game({
                           <div className="decision-note-action">
                             <strong>{actionNames[note.action.kind] || note.action.kind}</strong>
                             {note.action.args.filter((a): a is string => typeof a === "string" && a.startsWith("TILE_")).map((tile, i) => <Tile small tile={tile.slice(5)} key={i} />)}
-                            <span>{note.sampling === "categorical" ? t("按概率采样") : note.sampling === "uniform" ? t("等概率采样") : t("LLM 决策")}</span>
-                            <small>{note.seconds.toFixed(2)}s · {note.candidate_count} {t("个合法候选")}</small>
+                            <span>{note.sampling === "categorical" ? t("AI 出牌") : note.sampling === "uniform" ? t("随机出牌") : t("LLM 决策")}</span>
+                            <small>{note.seconds.toFixed(2)}s · {note.candidate_count} {t("个可选项")}</small>
                           </div>
-                          <p>{(note.sampling === "uniform" ? t("从{count}个合法候选中等概率采样。", { count: note.candidate_count }) : note.summary) || (note.sampling === "categorical" ? t("该 NTP 模型输出动作，不提供文字说明。") : t("该模型未提供简短决策说明。"))}</p>
+                          <p>{(note.sampling === "uniform" ? t("从 {count} 个可选动作中随机选择。", { count: note.candidate_count }) : note.summary) || (note.sampling === "categorical" ? t("本地模型直接给出推荐动作，不含文字解说。") : t("该模型未提供简短决策说明。"))}</p>
                           {note.selected_probability != null && (
                             <div className="prob-row">
-                              <small>{t("选中动作概率")}{(note.selected_probability * 100).toFixed(2)}%</small>
+                              <small>{t("AI 对该手的支持度 ")}{(note.selected_probability * 100).toFixed(1)}%</small>
                               <div className="prob-meter" aria-hidden="true">
                                 <span style={{ width: `${Math.max(2, Math.min(100, note.selected_probability * 100))}%` }} />
                               </div>

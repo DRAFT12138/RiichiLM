@@ -7,6 +7,8 @@ import pytest
 import torch
 
 from mahjong.arena.players import ModelPlayer
+from mahjong.contracts import MahjongError
+from mahjong.inference.sampling import DEFAULT_INFERENCE_TEMPERATURE, DEFAULT_INFERENCE_TOP_P
 from tests.unit.inference.test_policy import inference, view
 
 
@@ -34,3 +36,21 @@ def test_model_player_samples_rather_than_argmax_and_has_its_own_rng(inference):
     assert len(set(samples)) == 3
     assert sum(action.kind == "A_PASS" for action in samples) in range(10, 39)
     assert player.generator is not isolated.generator
+    assert (player.temperature, player.top_p) == (DEFAULT_INFERENCE_TEMPERATURE, DEFAULT_INFERENCE_TOP_P)
+
+
+def test_model_player_respects_custom_temperature_and_top_p(inference):
+    with torch.no_grad():
+        for parameter in inference.model.parameters():
+            parameter.zero_()
+    greedy_like = ModelPlayer(inference, seed=42, temperature=0.0, top_p=0.5)
+    v = view()
+    first = greedy_like.choose(v, deadline=time.monotonic() + 10).generation
+    for _ in range(10):
+        nxt = greedy_like.choose(v, deadline=time.monotonic() + 10).generation
+        assert nxt.suffix_ids == first.suffix_ids
+        assert nxt.behavior_action_logprob == 0.0
+    with pytest.raises(MahjongError, match="CONFIG_INVALID"):
+        ModelPlayer(inference, seed=42, temperature=2.5)
+    with pytest.raises(MahjongError, match="CONFIG_INVALID"):
+        ModelPlayer(inference, seed=42, top_p=0.0)

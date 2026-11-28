@@ -30,7 +30,7 @@
 | **長い文脈の共有** | 同じ局・視点の最大八つの判断で学習の幹を共有。条件を満たす GPU BF16 実行では、層全体のコンパイル、fused Adam、投影の統合、CPU 先読みを使います。 |
 | **GPU 1枚で学習** | 既定の約1.0148億パラメータのモデルは単一GPUで学習できます。BF16学習の実測ピークは割り当て4.12 GiB／予約6.45 GiB。参考環境とスループットは下記をご覧ください。 |
 | **学習状態を保って再開** | checkpoint にモデル、optimizer、RNG、進捗、データ位置を保存。RL は READY/PREPARED のラウンド境界から復帰し、中断した処理を再計算できます。 |
-| **動く方策を観察** | 京都漆黒と翡翠を基調とした React/TypeScript の対局・四 AI 観戦卓。各席で自前 NTP checkpoint、カスタム `.pt` 重み、外部 LLM、ランダム戦略を組み合わせ、全席一括設定やミニ卓プレビュー、効果音、実行デバイス表示に対応します。 |
+| **動く方策を観察** | 京都漆黒と翡翠を基調とした React/TypeScript の対局・四 AI 観戦卓（独立した対局ロビー／モデルライブラリタブ付き）。各席で自前 NTP checkpoint、カスタム `.pt` 重み、外部 LLM、ランダム戦略を組み合わせ、全席一括設定、`temperature`・`top-p` サンプリング調整、ミニ卓プレビュー、効果音、実行デバイス表示に対応します。 |
 | **英・中・日の三言語** | ブラウザー言語の自動検出と手動保存に加え、ドラ光沢、直近打牌・ツモ切り区別、鳴き元の向き反映、中央クリック／`D` での点差表示、ホバー枚数表示（`x/4`）、鳴きカットイン、キーボード・観戦操作を備えます。 |
 
 ## 画面紹介
@@ -68,7 +68,7 @@
 
 `training.max_updates` は再開時も**絶対的な総更新数**です。新規事前学習の既定値は GPU BF16 です。適切な小規模設定では `runtime.device=cpu runtime.precision=32-true` で CPU FP32 を選べます。完全な再開では保存時の精度・デバイス条件を引き継ぎ、モデル・データ・設定・状態形式の互換性が必要です。実行環境の変更で数値結果が変わる場合があります。
 
-現在の RL 初期化には互換 NTP checkpoint と、その識別情報の検証に使う元の処理済み学習コーパスが必要です。任意の単独 Actor ファイルで代用できるわけではありません。Web のモデル選択は現在 NTP checkpoint に対応し、RL Actor スナップショットには未対応です。
+現在の RL 初期化には互換 NTP checkpoint と、その識別情報の検証に使う元の処理済み学習コーパスが必要です。任意の単独 Actor ファイルで代用できるわけではありません。Web のモデル選択と `arena-evaluate` は現在 NTP checkpoint とカスタム `.pt`/`.pth` 重みに対応し、RL Actor スナップショットには未対応です。
 
 ### 参考ハードウェアと計算スループット
 
@@ -130,7 +130,7 @@ Web と CLI のモデルプレイヤーは席ごとに prefix KV を保持し、
 
 自前の Qwen3 方策重みは `.pt`／`.pth` を `weights/` に置いてモデル一覧を更新するか、`--weights-root /path/to/weights` で指定します。公開済みの 50 万ステップベースモデルを試す場合は、[Hugging Face](https://huggingface.co/Draft12138/RiichiLM-Base) から `weights/` にダウンロードしてください（`hf download Draft12138/RiichiLM-Base riichilm-base-500k.pt --local-dir weights`）。学習用 `state.pt`、推論用エクスポート、裸の `state_dict` に対応し、run メタデータ・学習データ・指紋の一致を要求しません。テンソルとネットワーク構造の互換性は必要です。裸の重みは現在の v2 入力、8192 token、RoPE theta 1000000 を既定とし、同名の `.json` モデル設定で変更できます。`.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` で optimizer と復帰状態を除去し、テンソル精度と元ファイルを保持します。
 
-`arena-evaluate` でブラウザーを使わずに四 AI 対局を実行できます。プレイヤーは `weights:<ファイル>`、`checkpoint:<ディレクトリ>`、`llm:<id>`、`random` に対応します。GPU モデルは Web と同じ BF16／FlashAttention を使い、同一モデルの複数席は重みを共有し、サンプリング RNG は独立します。レポートはモデル別に最終点数と純増減を集計し、複数席のモデルを比較するための一席あたり平均も記録します。
+`arena-evaluate` でブラウザーを使わずに四 AI 対局を実行できます。プレイヤーは `weights:<ファイル>`、`checkpoint:<ディレクトリ>`、`llm:<id>`、`random` に対応します。GPU モデルは Web と同じ BF16／FlashAttention を使い、`web-play`・`arena-evaluate` ともに `temperature` と `top-p` サンプリング（`0` で貪欲法、既定 `0.7` / `0.9`）を設定できます。同一モデルの複数席は重みを共有し、サンプリング RNG は独立します。レポートはモデル別に最終点数と純増減を集計し、複数席のモデルを比較するための一席あたり平均も記録します。
 
 ```bash
 .venv/bin/python -m mahjong arena-evaluate \

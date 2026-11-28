@@ -289,3 +289,70 @@ def test_empty_legal_set_and_old_enumeration_mapping_are_rejected(inference):
     changed=[LegalMove(m.action,'changed') for m in v.legal_moves]
     with pytest.raises(MahjongError,match='STALE_DECISION'):
         inference.prepare(DecisionView(v.key,v.sequence,changed,v.rules_digest,True))
+
+
+def test_decode_options_temperature_and_top_p_sampling(inference, monkeypatch):
+    req = inference.prepare(view())
+    original = inference.lm.forward
+    # Branch 0 tokens: A_PASS starts with token 29 (let's boost it moderately) and A_CHI with another token.
+    pass_tok = req.legal_suffixes[0][0]
+    chi_tok = next(s[0] for s in req.legal_suffixes if s[0] != pass_tok)
+
+    def biased_forward(**kwargs):
+        out = original(**kwargs)
+        out.logits.fill_(0.0)
+        out.logits[..., pass_tok] = 2.0
+        out.logits[..., chi_tok] = 0.0
+        return out
+
+    monkeypatch.setattr(inference.lm, 'forward', biased_forward)
+
+    # T=0.0 with categorical strategy acts as deterministic argmax with behavior_action_logprob=0.
+    gen_zero = torch.Generator().manual_seed(7)
+    res_zero = inference.generate(
+        req, options=DecodeOptions('categorical', temperature=0.0, top_p=0.9), generator=gen_zero
+    )
+    assert res_zero.suffix_ids[0] == pass_tok
+    assert res_zero.behavior_action_logprob == 0.0
+    assert res_zero.model_action_logprob < 0.0
+
+    # top_p=0.5 truncates below the ~88% pass token, keeping only the top token.
+    for seed in range(10):
+        res_nuc = inference.generate(
+            req, options=DecodeOptions('categorical', temperature=1.0, top_p=0.5),
+            generator=torch.Generator().manual_seed(seed),
+        )
+        assert res_nuc.suffix_ids[0] == pass_tok
+        assert res_nuc.behavior_action_logprob == pytest.approx(0.0, abs=1e-6)
+        assert res_nuc.model_action_logprob < -0.05
+
+    # Lower temperature sharpens toward pass_tok compared to high temperature.
+    low_hits = sum(
+        inference.generate(
+            req, options=DecodeOptions('categorical', temperature=0.25, top_p=1.0),
+            generator=torch.Generator().manual_seed(s),
+        ).suffix_ids[0] == pass_tok
+        for s in range(60)
+    )
+    high_hits = sum(
+        inference.generate(
+            req, options=DecodeOptions('categorical', temperature=2.0, top_p=1.0),
+            generator=torch.Generator().manual_seed(s),
+        ).suffix_ids[0] == pass_tok
+        for s in range(60)
+    )
+    assert low_hits > high_hits
+
+    # Invalid temperature / top_p values fail cleanly before forward.
+    for bad in (
+        DecodeOptions('categorical', temperature=-0.1),
+        DecodeOptions('categorical', temperature=2.5),
+        DecodeOptions('categorical', temperature=float('nan')),
+        DecodeOptions('categorical', temperature=True),
+        DecodeOptions('categorical', top_p=0.0),
+        DecodeOptions('categorical', top_p=1.1),
+        DecodeOptions('categorical', top_p=float('inf')),
+        DecodeOptions('categorical', top_p=False),
+    ):
+        with pytest.raises(MahjongError, match='CONTRACT_MISMATCH'):
+            inference.generate(req, options=bad, generator=torch.Generator().manual_seed(0))

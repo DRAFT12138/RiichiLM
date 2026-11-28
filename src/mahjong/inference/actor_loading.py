@@ -81,10 +81,29 @@ def publish_actor(root, actor, settings, profile, provenance, *, max_files=18, b
     _write_bytes(staging / 'manifest.json', encoded)
     _fsync_directory(staging)
     os.rename(staging, final); _fsync_directory(root)
-    loaded = load_actor(final)
-    if any(not torch.equal(v, loaded.model.state_dict()[k].cpu()) for k, v in state.items()):
-        raise MahjongError('CHECKPOINT_INVALID', 'published Actor tensor readback differs')
-    return loaded.source['actor_ref']
+    try:
+        manifest_disk = json.loads((final / 'manifest.json').read_text())
+        if manifest_disk != manifest or final.name != manifest_disk.get('artifact_id'):
+            raise ValueError('published Actor manifest mismatch')
+        with (final / 'actor.pt').open('rb') as f:
+            rd_len, rd_sha = _stream_digest(f)
+        if (rd_len, rd_sha) != (manifest_disk['weights_bytes'], manifest_disk['weights_sha256']):
+            raise ValueError('published Actor digest mismatch')
+        readback = torch.load(final / 'actor.pt', map_location='cpu', weights_only=True)
+        check_state(actor, readback)
+        if any(not torch.equal(v, readback[k]) for k, v in state.items()):
+            raise ValueError('published Actor tensor readback differs')
+    except (KeyError, OSError, TypeError, ValueError, RuntimeError) as exc:
+        if isinstance(exc, MahjongError):
+            raise
+        raise MahjongError('CHECKPOINT_INVALID', f'published Actor verification failed: {exc}') from exc
+    return dict(
+        artifact_id=manifest_disk['artifact_id'],
+        manifest_hash=digest(manifest_disk),
+        weights_sha256=rd_sha,
+        weights_bytes=rd_len,
+        compatibility_hash=digest(manifest_disk['compatibility']),
+    )
 
 
 def load_actor(path, *, expected=None, device='cpu'):

@@ -13,10 +13,12 @@ test("custom weights show their filename and can be assigned in each language", 
   for (const [locale, label] of [["en", "Custom weights"], ["ja", "カスタム重み"], ["zh-CN", "自定义权重"]]) {
     await page.locator(".topbar .language-switcher select").selectOption(locale);
     await expect(page.locator("#opponent-0 option[value='weights:one']")).toHaveText(`${label} · my-policy.pt`);
+    await page.locator(".topbar-nav button").nth(1).click();
     await expect(page.locator(".run-heading span")).toHaveText(label);
     await expect(page.locator(".checkpoint code")).toHaveText("my-policy.pt");
     await expect(page.locator(".checkpoint b, .run-heading code")).toHaveCount(0);
     await page.locator(".assign-buttons button").first().click();
+    await page.locator(".topbar-nav button").nth(0).click();
     await expect(page.locator("#opponent-0")).toHaveValue(cp.id);
   }
 });

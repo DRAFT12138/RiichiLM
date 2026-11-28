@@ -92,6 +92,12 @@ def save_statistics(directory, outcomes, identities):
 
 
 def main():
+    from mahjong.inference.sampling import (
+        DEFAULT_INFERENCE_TEMPERATURE,
+        DEFAULT_INFERENCE_TOP_P,
+        validate_sampling_params,
+    )
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkpoint', type=Path, default=ROOT / 'state.pt')
     parser.add_argument('--weights-root', type=Path, default=ROOT / 'weights')
@@ -100,6 +106,10 @@ def main():
     parser.add_argument('--seeds', type=int, nargs='+', help='默认随机生成新种子；数量须为 games/4')
     parser.add_argument('--device', choices=['cpu', 'cuda:0'], default=None)
     parser.add_argument('--gpu-memory-gib', type=float, default=16.)
+    parser.add_argument('--temperature', type=float, default=DEFAULT_INFERENCE_TEMPERATURE,
+                        help=f'本地模型推理温度 [0, 2]（0 为贪心），默认 {DEFAULT_INFERENCE_TEMPERATURE}')
+    parser.add_argument('--top-p', type=float, default=DEFAULT_INFERENCE_TOP_P,
+                        help=f'本地模型推理 Top-P 核采样 (0, 1]，默认 {DEFAULT_INFERENCE_TOP_P}')
     parser.add_argument('--decision-timeout', type=float, default=120.)
     parser.add_argument('--max-windows', type=int, default=20000)
     parser.add_argument('--output-dir', type=Path, help='新的输出目录，禁止覆盖既有评测')
@@ -109,6 +119,10 @@ def main():
     seeds = args.seeds if args.seeds is not None else secrets.SystemRandom().sample(range(2**32), args.games // 4)
     if len(seeds) != args.games // 4 or len(set(seeds)) != len(seeds) or any(not 0 <= s < 2**32 for s in seeds):
         parser.error('--seeds 需为不重复的32位无符号数，数量为 games/4')
+    try:
+        temperature, top_p = validate_sampling_params(args.temperature, args.top_p)
+    except Exception as exc:
+        parser.error(str(exc))
 
     import torch
     from mahjong.arena.evaluation import evaluate_cli
@@ -145,13 +159,16 @@ def main():
              for p in [args.checkpoint, candidate, *opponents]]
     provenance = dict(created=datetime.now().astimezone().isoformat(), source_step=step, files=files,
                       seeds=seeds, rotate=True, games=args.games, device=device,
+                      temperature=temperature, top_p=top_p,
                       device_name=torch.cuda.get_device_name(0) if device == 'cuda:0' else 'cpu',
                       torch_version=torch.__version__, export_verified=True,
                       argv=sys.argv, git_head=subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip())
     atomic_json(directory / 'provenance.json', provenance)
     options = SimpleNamespace(players=[f'weights:{p.resolve()}' for p in [candidate, *opponents]],
                               llm_config=None, mode='hanchan', device=device,
-                              gpu_memory_gib=args.gpu_memory_gib, seeds=seeds, rotate=True,
+                              gpu_memory_gib=args.gpu_memory_gib,
+                              temperature=temperature, top_p=top_p,
+                              seeds=seeds, rotate=True,
                               decision_timeout=args.decision_timeout, max_windows=args.max_windows,
                               output=str(directory / 'report.json'))
     print(f'候选={candidate} 对手={opponents}\n种子={seeds}\n输出={directory}', flush=True)

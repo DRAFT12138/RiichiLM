@@ -7,12 +7,23 @@ test("pure AI spectator pauses, steps, changes perspective and shows decision no
   await expect(page.locator(".start-button")).toBeEnabled();
   await page.getByRole("button", { name: "纯 AI 观战" }).click();
   await expect(page.locator(".opponent-card")).toHaveCount(4);
+  await expect(page.locator("#sampling-temperature")).toHaveValue("0.7");
+  await expect(page.locator("#sampling-top-p")).toHaveValue("0.9");
+  await page.locator("#sampling-temperature").fill("0.55");
+  await page.locator("#sampling-top-p").fill("0.85");
+  await page.getByRole("button", { name: "恢复默认" }).click();
+  await expect(page.locator("#sampling-temperature")).toHaveValue("0.7");
+  await expect(page.locator("#sampling-top-p")).toHaveValue("0.9");
+  await page.locator("#sampling-temperature").fill("0.55");
+  await page.locator("#sampling-top-p").fill("0.85");
   await page.getByRole("button", { name: /单局练习/ }).click();
   const created = page.waitForRequest((r) => r.url().endsWith("/api/table") && r.method() === "POST");
   await page.getByRole("button", { name: "开始观战" }).click();
   const config = (await created).postDataJSON();
   expect(config.spectator).toBe(true);
   expect(config.opponents).toEqual(["random", "random", "random", "random"]);
+  expect(config.temperature).toBe(0.55);
+  expect(config.top_p).toBe(0.85);
   await expect(page.getByRole("button", { name: "暂停播放" })).toBeEnabled({ timeout: 30000 });
   await expect(page.locator(".self-hand button")).toHaveCount(0);
   await page.getByRole("button", { name: "暂停播放" }).click();
@@ -41,7 +52,7 @@ test("pure AI spectator pauses, steps, changes perspective and shows decision no
     expect(view.players.filter((p: { seat: number }) => p.seat !== seat).every((p: { hand: unknown; drawn: unknown }) => p.hand === null && p.drawn === null)).toBe(true);
   }
   await page.getByRole("button", { name: "AI决策说明" }).click();
-  await expect(page.locator(".decision-note").first()).toContainText("等概率采样");
+  await expect(page.locator(".decision-note").first()).toContainText("随机出牌");
   await page.setViewportSize({ width: 390, height: 844 });
   const controls = await page.locator(".spectator-controls").boundingBox();
   expect(controls!.x).toBeGreaterThanOrEqual(0);
@@ -65,7 +76,7 @@ test("LLM opponents can be selected independently for several seats", async ({ p
   await expect(page.locator("#opponent-0")).toHaveValue("llm:first");
   await expect(page.locator("#opponent-1")).toHaveValue("llm:second");
   await expect(page.locator("#opponent-2")).toHaveValue("llm:first");
-  await expect(page.locator(".opponent-note").first()).toContainText("通用 LLM · 通用模型一");
+  await expect(page.locator(".opponent-note").first()).toContainText("大语言模型 · 通用模型一");
   await expect(page.locator(".start-button")).toBeEnabled();
 });
 

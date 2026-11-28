@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from mahjong.contracts import MahjongError, canonical_json
+from mahjong.inference.sampling import DEFAULT_INFERENCE_TEMPERATURE, DEFAULT_INFERENCE_TOP_P
 
 
 def parser():
@@ -51,6 +52,10 @@ def parser():
     web.add_argument('--weights-root', default='weights', help='自定义 .pt/.pth 权重目录，无需训练 run 元数据')
     web.add_argument('--device', choices=('cpu', 'cuda:0'), default='cpu')
     web.add_argument('--gpu-memory-gib', type=float, default=16., help='模型玩家进程显存预算，默认16GiB，按空闲显存动态下调')
+    web.add_argument('--temperature', type=float, default=DEFAULT_INFERENCE_TEMPERATURE,
+                     help=f'本地模型推理默认温度 [0, 2]（0 为贪心），默认 {DEFAULT_INFERENCE_TEMPERATURE}')
+    web.add_argument('--top-p', type=float, default=DEFAULT_INFERENCE_TOP_P,
+                     help=f'本地模型推理默认 Top-P 核采样 (0, 1]，默认 {DEFAULT_INFERENCE_TOP_P}')
     web.add_argument('--port', type=int, default=8765)
     web.add_argument('--lease-seconds', type=float, default=30)
     web.add_argument('--load-timeout', type=float, default=300)
@@ -68,6 +73,10 @@ def parser():
     arena.add_argument('--rotate', action='store_true', help='每个种子轮换四席；按种子聚合')
     arena.add_argument('--decision-timeout', type=float, default=120)
     arena.add_argument('--max-windows', type=int, default=20000)
+    arena.add_argument('--temperature', type=float, default=DEFAULT_INFERENCE_TEMPERATURE,
+                       help=f'本地模型推理温度 [0, 2]（0 为贪心），默认 {DEFAULT_INFERENCE_TEMPERATURE}')
+    arena.add_argument('--top-p', type=float, default=DEFAULT_INFERENCE_TOP_P,
+                       help=f'本地模型推理 Top-P 核采样 (0, 1]，默认 {DEFAULT_INFERENCE_TOP_P}')
     arena.add_argument('--output', required=True, help='评估 JSON 报告；不改写已有文件')
     return result
 

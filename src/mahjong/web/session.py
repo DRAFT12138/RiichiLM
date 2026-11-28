@@ -5,7 +5,6 @@ from dataclasses import asdict
 import json
 import math
 import multiprocessing
-from pathlib import Path
 import secrets
 import threading
 import time
@@ -14,6 +13,11 @@ import uuid
 from mahjong.contracts import MahjongError
 from mahjong.arena.llm import load_llm_configs
 from mahjong.arena.memory import validate_gpu_memory_gib
+from mahjong.inference.sampling import (
+    DEFAULT_INFERENCE_TEMPERATURE,
+    DEFAULT_INFERENCE_TOP_P,
+    validate_sampling_params,
+)
 from .catalog import Catalog
 
 
@@ -40,6 +44,8 @@ class Session:
         load_timeout=300,
         decision_timeout=120,
         llm_config=None,
+        temperature=DEFAULT_INFERENCE_TEMPERATURE,
+        top_p=DEFAULT_INFERENCE_TOP_P,
         worker=worker_entry,
     ):
         for value in (lease_seconds, load_timeout, decision_timeout):
@@ -47,6 +53,7 @@ class Session:
                 raise MahjongError("CONFIG_INVALID", "超时参数必须为有限正数")
         if device not in ("cpu", "cuda:0"):
             raise MahjongError("CONFIG_INVALID", "不支持的设备")
+        self.temperature, self.top_p = validate_sampling_params(temperature, top_p)
         self.gpu_memory_gib = validate_gpu_memory_gib(gpu_memory_gib)
         self.catalog = Catalog(models_root, weights_root=weights_root)
         self.llm_configs = load_llm_configs(llm_config)
@@ -79,6 +86,8 @@ class Session:
                 device=self.device,
                 gpu_memory_gib=self.gpu_memory_gib,
                 lease_seconds=self.lease_seconds,
+                temperature=self.temperature,
+                top_p=self.top_p,
             )
 
     def init_page(self, page_id, generation):
@@ -142,10 +151,21 @@ class Session:
             return previous["result"]
         return None
 
-    def create(self, page_id, request_id, mode, opponents, spectator=False):
+    def create(self, page_id, request_id, mode, opponents, spectator=False, temperature=None, top_p=None):
         with self.lock:
             self._owner(page_id)
-            payload = dict(operation="create", mode=mode, opponents=opponents, spectator=spectator)
+            effective_temp, effective_top_p = validate_sampling_params(
+                self.temperature if temperature is None else temperature,
+                self.top_p if top_p is None else top_p,
+            )
+            payload = dict(
+                operation="create",
+                mode=mode,
+                opponents=opponents,
+                spectator=spectator,
+                temperature=effective_temp,
+                top_p=effective_top_p,
+            )
             require(isinstance(request_id, str) and 8 <= len(request_id) <= 128, "请求身份无效")
             require(request_id not in self.retired_create_ids, "本次开局已结束，请重新开局")
             previous = self._request(request_id, payload)
@@ -171,7 +191,8 @@ class Session:
                 else:
                     resolved.append(self.catalog.resolve(item))
             config = dict(mode=mode, opponents=resolved, spectator=spectator, seed=secrets.randbits(32),
-                          gpu_memory_gib=self.gpu_memory_gib)
+                          gpu_memory_gib=self.gpu_memory_gib,
+                          temperature=effective_temp, top_p=effective_top_p)
             context = multiprocessing.get_context("spawn")
             parent, child = context.Pipe()
             process = context.Process(

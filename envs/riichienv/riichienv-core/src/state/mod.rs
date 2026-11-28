@@ -1899,6 +1899,7 @@ impl GameState {
 
             if !nagashi_winners.is_empty() {
                 final_reason = "nagashimangan".to_string();
+                let mut nagashi_deltas = [0i32; NP];
                 // Apply mangan tsumo payment for each nagashi winner (no honba)
                 for &w in &nagashi_winners {
                     let is_oya = w == self.oya;
@@ -1906,11 +1907,11 @@ impl GameState {
                     if is_oya {
                         for i in 0..np {
                             if i as u8 != w {
-                                self.players[i].score -= score_res.pay_tsumo_ko as i32;
-                                self.players[i].score_delta -= score_res.pay_tsumo_ko as i32;
-                                self.players[w as usize].score += score_res.pay_tsumo_ko as i32;
-                                self.players[w as usize].score_delta +=
-                                    score_res.pay_tsumo_ko as i32;
+                                let pay = score_res.pay_tsumo_ko as i32;
+                                self.players[i].score -= pay;
+                                self.players[w as usize].score += pay;
+                                nagashi_deltas[i] -= pay;
+                                nagashi_deltas[w as usize] += pay;
                             }
                         }
                     } else {
@@ -1922,11 +1923,19 @@ impl GameState {
                                     score_res.pay_tsumo_ko as i32
                                 };
                                 self.players[i].score -= pay;
-                                self.players[i].score_delta -= pay;
                                 self.players[w as usize].score += pay;
-                                self.players[w as usize].score_delta += pay;
+                                nagashi_deltas[i] -= pay;
+                                nagashi_deltas[w as usize] += pay;
                             }
                         }
+                    }
+                }
+                for (i, p) in self.players.iter_mut().enumerate() {
+                    if self.policy_external_rounds {
+                        // Per-event MJAI settlement: reach_accepted already recorded riichi deposits.
+                        p.score_delta = nagashi_deltas[i];
+                    } else {
+                        p.score_delta += nagashi_deltas[i];
                     }
                 }
             } else {
@@ -1939,6 +1948,11 @@ impl GameState {
                         let delta = if *tp { pk } else { -pn };
                         self.players[i].score += delta;
                         self.players[i].score_delta = delta;
+                    }
+                } else {
+                    // All tenpai or all noten transfers no points; clear prior riichi deposit deltas.
+                    for p in &mut self.players {
+                        p.score_delta = 0;
                     }
                 }
             }

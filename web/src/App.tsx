@@ -1,9 +1,9 @@
 import { useI18n, LanguageSwitcher } from "./i18n";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, CircleDot, Sparkles, X } from "lucide-react";
+import { Cpu, LayoutGrid, X } from "lucide-react";
 import * as api from "./api";
 import type { Candidate, Catalog, Mode, Table, SpectatorControl, SetupConfig } from "./types";
-import { Setup } from "./Setup";
+import { Setup, ModelLibrary } from "./Setup";
 import { Game } from "./Game";
 import { randomCast } from "./cast";
 import { SoundControl } from "./sound";
@@ -18,12 +18,20 @@ export function App() {
   }, [locale, t]);
   const [catalog, setCatalog] = useState<Catalog>({ runs: [], errors: [] }),
     [table, setTable] = useState<Table | null>(null),
+    [view, setView] = useState<"lobby" | "models">("lobby"),
     [ready, setReady] = useState(false),
     [pending, setPending] = useState(false),
     [error, setError] = useState(""),
     [device, setDevice] = useState("cpu"),
     [cast, setCast] = useState(() => randomCast()),
-    [setupConfig, setSetupConfig] = useState<SetupConfig>({ mode: "hanchan", opponents: ["random", "random", "random"], spectator: false, primary: "random" }),
+    [setupConfig, setSetupConfig] = useState<SetupConfig>({
+      mode: "hanchan",
+      opponents: ["random", "random", "random"],
+      spectator: false,
+      primary: "random",
+      temperature: 0.7,
+      top_p: 0.9,
+    }),
     [createUncertain, setCreateUncertain] = useState(false),
     [sessionInvalid, setSessionInvalid] = useState(false);
   const active = useRef<string | null>(null),
@@ -33,7 +41,15 @@ export function App() {
     refreshPageRef = useRef<HTMLButtonElement>(null),
     mounted = useRef(true),
     viewQueue = useRef<Promise<void>>(Promise.resolve()),
-    createAttempt = useRef<{ id: string; mode: Mode; opponents: string[]; spectator: boolean; uncertain: boolean } | null>(null);
+    createAttempt = useRef<{
+      id: string;
+      mode: Mode;
+      opponents: string[];
+      spectator: boolean;
+      temperature: number;
+      top_p: number;
+      uncertain: boolean;
+    } | null>(null);
   useEffect(() => {
     mounted.current = true;
     let cancelled = false;
@@ -42,11 +58,18 @@ export function App() {
       .then(async () => {
         const [c, b] = await Promise.all([
           api.catalog(),
-          api.request<{ device: string }>("bootstrap"),
+          api.request<{ device: string; temperature?: number; top_p?: number }>("bootstrap"),
         ]);
         if (!cancelled) {
           setCatalog(c);
           setDevice(b.device);
+          if (typeof b.temperature === "number" || typeof b.top_p === "number") {
+            setSetupConfig((old) => ({
+              ...old,
+              temperature: typeof b.temperature === "number" ? b.temperature : old.temperature,
+              top_p: typeof b.top_p === "number" ? b.top_p : old.top_p,
+            }));
+          }
           setReady(true);
         }
       })
@@ -129,13 +152,27 @@ export function App() {
     sessionInvalidRef.current = true;
     setSessionInvalid(true);
   }
-  function start(mode: Mode, opponents: string[], spectator: boolean) {
+  function start(mode: Mode, opponents: string[], spectator: boolean, temperature: number, topP: number) {
     if (locked.current) return;
-    const attempt = createAttempt.current ?? { id: crypto.randomUUID(), mode, opponents: [...opponents], spectator, uncertain: false };
+    const attempt = createAttempt.current ?? {
+      id: crypto.randomUUID(),
+      mode,
+      opponents: [...opponents],
+      spectator,
+      temperature,
+      top_p: topP,
+      uncertain: false,
+    };
     createAttempt.current = attempt;
     void run(async () => {
       try {
-        const result = await api.create(attempt.mode, attempt.opponents, attempt.id, attempt.spectator);
+        const result = await api.create(
+          attempt.mode,
+          attempt.opponents,
+          attempt.id,
+          attempt.spectator,
+          { temperature: attempt.temperature, top_p: attempt.top_p },
+        );
         active.current = result.table_id;
         createAttempt.current = null;
         setCreateUncertain(false);
@@ -265,10 +302,17 @@ export function App() {
       await api.initialize();
       const [c, b] = await Promise.all([
         api.catalog(),
-        api.request<{ device: string }>("bootstrap"),
+        api.request<{ device: string; temperature?: number; top_p?: number }>("bootstrap"),
       ]);
       setCatalog(c);
       setDevice(b.device);
+      if (typeof b.temperature === "number" || typeof b.top_p === "number") {
+        setSetupConfig((old) => ({
+          ...old,
+          temperature: typeof b.temperature === "number" ? b.temperature : old.temperature,
+          top_p: typeof b.top_p === "number" ? b.top_p : old.top_p,
+        }));
+      }
       setReady(true);
     });
   };
@@ -277,38 +321,61 @@ export function App() {
       <div className="main-wrap">
         {!table && (
           <header className="topbar">
-            <a
-              className="brand"
-              href="https://www.riichilm.top"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={t("RiichiLM 官网")}
-              title={t("RiichiLM 官网")}
-            >
-              <span className="brand-symbol" aria-hidden="true"><Sparkles size={23} /></span>
-              <span>
-                <strong>RiichiLM</strong>
-                <small>{t("学习 · 对局 · 探索")}</small>
-              </span>
-            </a>
-            <span className="header-place">{t("对局大厅")}</span>
+            <div className="topbar-left">
+              <a
+                className="brand"
+                href="https://www.riichilm.top"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={t("RiichiLM 官网")}
+                title={t("RiichiLM 官网")}
+              >
+                <span className="brand-symbol" aria-hidden="true">
+                  <svg viewBox="0 0 24 30" width="18" height="22" fill="none">
+                    <rect x="2" y="2" width="20" height="26" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeWidth="1.6" />
+                    <circle cx="12" cy="15" r="4.2" fill="#e14d43" />
+                    <circle cx="12" cy="15" r="1.4" fill="#fafaf8" />
+                  </svg>
+                </span>
+                <span className="brand-text">
+                  <strong>RiichiLM</strong>
+                  <small>{t("学习 · 对局 · 探索")}</small>
+                </span>
+              </a>
+
+              <nav className="topbar-nav" aria-label={t("对局大厅")}>
+                <button
+                  type="button"
+                  className={`nav-tab ${view === "lobby" ? "is-active" : ""}`}
+                  aria-current={view === "lobby" ? "page" : undefined}
+                  onClick={() => setView("lobby")}
+                >
+                  <LayoutGrid size={14} />
+                  {t("对局大厅")}
+                </button>
+                <button
+                  type="button"
+                  className={`nav-tab ${view === "models" ? "is-active" : ""}`}
+                  aria-label={t("模型与训练")}
+                  aria-current={view === "models" ? "page" : undefined}
+                  onClick={() => setView("models")}
+                >
+                  <Cpu size={14} />
+                  {t("模型与训练")}
+                  <span className="nav-count">
+                    {catalog.runs.reduce((n, r) => n + r.checkpoints.filter((c) => c.selectable).length, 0)}
+                  </span>
+                </button>
+              </nav>
+            </div>
+
             <div className="topbar-status">
-              <SoundControl />
-              <LanguageSwitcher />
               <span className="device-pill">
-                <CircleDot size={13} />
+                <span className={`device-dot ${ready ? "is-ready" : ""}`} aria-hidden="true" />
                 {ready ? t("本地牌馆") : t("连接中")} · {device.toUpperCase()}
               </span>
-              <button
-                className="header-library"
-                onClick={() => {
-                  document
-                    .querySelector(".library-panel")
-                    ?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
-                }}
-              >
-                {t("模型与训练")}<ArrowUpRight size={14} />
-              </button>
+              <SoundControl />
+              <LanguageSwitcher />
             </div>
           </header>
         )}
@@ -337,6 +404,17 @@ export function App() {
               onControl={control}
               cast={cast}
             />
+          ) : view === "models" ? (
+            <ModelLibrary
+              catalog={catalog}
+              ready={ready}
+              pending={pending || sessionInvalid}
+              refresh={refresh}
+              config={setupConfig}
+              setConfig={setSetupConfig}
+              createUncertain={createUncertain}
+              onBack={() => setView("lobby")}
+            />
           ) : (
             <Setup
               catalog={catalog}
@@ -349,6 +427,7 @@ export function App() {
               config={setupConfig}
               setConfig={setSetupConfig}
               createUncertain={createUncertain}
+              onOpenModels={() => setView("models")}
             />
           )}
         </main>

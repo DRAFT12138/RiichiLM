@@ -30,7 +30,7 @@
 | **共享长上下文** | 同局同视角最多八个决策共享训练主干；合资格 GPU BF16 路径接入整层编译、fused Adam、合并投影和 CPU 前瞻准备。 |
 | **单卡即可训练** | 默认 1.0148 亿参数模型支持单 GPU 训练；一组 BF16 训练实测峰值为 4.12 GiB 活跃分配／6.45 GiB 分配器保留显存，参考设备与吞吐见下文。 |
 | **保留完整训练状态** | checkpoint 保存模型、优化器、RNG、进度及数据游标；RL 支持 READY/PREPARED 轮边界恢复及中断工作的重算。 |
-| **看得见的 AI 对局** | 采用京都黑漆翠玉视觉的 React/TypeScript 牌桌，支持真人对战与四 AI 观战；每席独立混搭自备 NTP checkpoint、自定义 `.pt` 权重、外接 LLM 与随机策略，支持「全席」一键指派、迷你牌桌预览、对局音效与设备状态展示。 |
+| **看得见的 AI 对局** | 采用京都黑漆翠玉视觉的 React/TypeScript 牌桌，提供对局大厅与独立模型库视图，支持真人对战与四 AI 观战；每席独立混搭自备 NTP checkpoint、自定义 `.pt` 权重、外接 LLM 与随机策略，支持「全席」一键指派、`temperature`/`top-p` 推理采样调节、迷你牌桌预览、合成对局音效与设备状态展示。 |
 | **中英日三语牌桌** | 支持自动检测与手动持久切换中/英/日三语；内置宝牌光泽、最后打出与摸切区分、按来源旋转的副露牌、点击或按 `D` 切换点差、悬停 `已见 x/4`、鸣牌特写横幅及完整键盘与观战控制。 |
 
 ## 界面预览
@@ -68,7 +68,7 @@
 
 `training.max_updates` 始终表示**绝对总目标**，续训也一样。新建预训练默认 GPU BF16；小配置可使用 `runtime.device=cpu runtime.precision=32-true` 选择 CPU FP32。完整恢复保留原精度／设备约定，要求模型、数据、配置和状态格式兼容；更换环境后数值轨迹可能变化。
 
-当前 RL 初始化需要兼容的 NTP checkpoint，及其对应的已处理训练语料用于身份核验，不能任意用独立 Actor 文件替代。Web 模型选择器目前支持 NTP checkpoint，暂不加载 RL Actor 快照。
+当前 RL 初始化仍需提供兼容的 NTP checkpoint **及其对应的已处理训练语料**以验证来源身份，任意独立 Actor 文件不能互换作为初始化输入。Web 模型选择器与 `arena-evaluate` 目前支持 NTP checkpoint 和自定义 `.pt`/`.pth` 权重，暂不加载 RL Actor 快照。
 
 ### 参考硬件与计算吞吐
 
@@ -130,7 +130,7 @@ Web 与 CLI 模型玩家按席位保留前缀 KV，复用相同历史并重算�
 
 自定义 Qwen3 策略权重：将 `.pt`／`.pth` 直接放入 `weights/` 并刷新模型列表，或传入 `--weights-root /path/to/weights`。如需直接体验已发布的 50 万步基座模型，可从 [Hugging Face](https://huggingface.co/Draft12138/RiichiLM-Base) 下载至 `weights/`（`hf download Draft12138/RiichiLM-Base riichilm-base-500k.pt --local-dir weights`）。支持训练 `state.pt`、精简推理文件和裸 `state_dict`，不要求 run 元数据、训练数据或指纹一致；模型张量须与网络结构相容。裸权重默认当前 v2 输入、8192 token 和 RoPE theta 1000000，可通过同名 `.json` 模型配置覆盖。使用 `.venv/bin/python -m mahjong export-weights --checkpoint /path/to/state.pt --output weights/my-policy.pt` 去掉优化器及恢复状态，保留张量精度和原文件。
 
-使用 `arena-evaluate` 可在无浏览器环境运行四 AI 对局，玩家支持 `weights:<文件>`、`checkpoint:<目录>`、`llm:<id>` 或 `random`。GPU 模型与 Web 使用相同的 BF16／FlashAttention 路径；同模型多席共享权重、采样 RNG 独立。报告按模型汇总最终点数和净得失点，并列出每席均值，便于比较占多个席位的模型。
+使用 `arena-evaluate` 可在无浏览器环境运行四 AI 对局，玩家支持 `weights:<文件>`、`checkpoint:<目录>`、`llm:<id>` 或 `random`。GPU 模型与 Web 使用相同的 BF16／FlashAttention 路径，`web-play` 与 `arena-evaluate` 均支持配置 `temperature` 与 `top-p` 采样（`0` 为贪心，默认 `0.7` / `0.9`）；同模型多席共享权重、采样 RNG 独立。报告按模型汇总最终点数和净得失点，并列出每席均值，便于比较占多个席位的模型。
 
 ```bash
 .venv/bin/python -m mahjong arena-evaluate \

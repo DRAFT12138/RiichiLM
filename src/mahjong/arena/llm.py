@@ -54,6 +54,7 @@ class LLMConfig:
     base_url: str
     api_key_env: str | None = None
     temperature: float | None = None
+    top_p: float | None = None
     max_tokens: int = 512
     max_attempts: int = 2
     request_timeout: float = 60
@@ -77,6 +78,7 @@ class LLMConfig:
                 or type(self.max_attempts) is not int or not 1 <= self.max_attempts <= 5
                 or type(self.request_timeout) not in (int, float) or not math.isfinite(self.request_timeout) or self.request_timeout <= 0
                 or self.temperature is not None and (type(self.temperature) not in (int, float) or not math.isfinite(self.temperature) or not 0 <= self.temperature <= 2)
+                or self.top_p is not None and (type(self.top_p) not in (int, float) or not math.isfinite(self.top_p) or not 0 < self.top_p <= 1)
                 or self.token_limit_field not in ("max_tokens", "max_completion_tokens")):
             raise MahjongError("CONFIG_INVALID", "LLM 采样、重试或时限配置无效")
 
@@ -150,6 +152,8 @@ class ChatCompletionClient:
                     **{config.token_limit_field: config.max_tokens})
         if config.temperature is not None:
             body["temperature"] = config.temperature
+        if config.top_p is not None:
+            body["top_p"] = config.top_p
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self._key is not None:
             headers["Authorization"] = "Bearer " + self._key

@@ -18,11 +18,14 @@ class PrefixCache:
         self.hits = self.reused_tokens = self.prefill_tokens = self.evictions = 0
 
     def clear(self, *, evicted=False):
-        if evicted and self.cache is not None:
+        old_cache = self.cache
+        if evicted and old_cache is not None:
             self.evictions += 1
         self.cache = None
         self.tokens = ()
         self.owner = None
+        if old_cache is not None and hasattr(old_cache, 'release'):
+            old_cache.release()
 
     @staticmethod
     def identity(policy, request):
@@ -37,16 +40,30 @@ class PrefixCache:
     def take(self, policy, request):
         owner = self.identity(policy, request)
         cache, tokens, previous_owner = self.cache, self.tokens, self.owner
-        self.clear()
+        self.cache = None
+        self.tokens = ()
+        self.owner = None
         common = 0
-        if cache is not None and previous_owner == owner:
+        if cache is not None and previous_owner == owner and tokens:
             # Recompute the last token even for an identical request: its logits
             # are required and must reflect this call's legal candidate set.
-            for old, new in zip(tokens, request.prefix_ids[:-1]):
-                if old != new:
-                    break
-                common += 1
+            new_p = request.prefix_ids[:-1]
+            hi = min(len(tokens), len(new_p))
+            if hi > 0:
+                if tokens[:hi] == new_p[:hi]:
+                    common = hi
+                else:
+                    lo = 0
+                    while lo < hi:
+                        mid = (lo + hi + 1) // 2
+                        if tokens[lo:mid] == new_p[lo:mid]:
+                            lo = mid
+                        else:
+                            hi = mid - 1
+                    common = lo
         if not common:
+            if cache is not None and hasattr(cache, 'release'):
+                cache.release()
             cache = None
         else:
             remove = cache.get_seq_length() - common

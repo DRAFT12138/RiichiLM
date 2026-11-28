@@ -13,7 +13,11 @@ def build_trie(actions):
         for token in action:
             if None in node:
                 raise MahjongError('CONTRACT_MISMATCH', 'legal action is a prefix of another')
-            node = node.setdefault(token, {})
+            child = node.get(token)
+            if child is None:
+                child = {}
+                node[token] = child
+            node = child
         if node:
             raise MahjongError('CONTRACT_MISMATCH', 'duplicate/prefix legal action')
         node[None] = index

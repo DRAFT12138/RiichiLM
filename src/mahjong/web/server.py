@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from mahjong.contracts import MahjongError
+from mahjong.inference.sampling import DEFAULT_INFERENCE_TEMPERATURE, DEFAULT_INFERENCE_TOP_P
 from .session import Session
 
 
@@ -16,9 +17,24 @@ STATIC = Path(__file__).parent / "static"
 
 
 def create_app(
-    *, models_root="outputs", weights_root="weights", device="cpu", port=8765, dev_origin=None, **timeouts
+    *,
+    models_root="outputs",
+    weights_root="weights",
+    device="cpu",
+    port=8765,
+    dev_origin=None,
+    temperature=DEFAULT_INFERENCE_TEMPERATURE,
+    top_p=DEFAULT_INFERENCE_TOP_P,
+    **timeouts,
 ):
-    session = Session(models_root, weights_root=weights_root, device=device, **timeouts)
+    session = Session(
+        models_root,
+        weights_root=weights_root,
+        device=device,
+        temperature=temperature,
+        top_p=top_p,
+        **timeouts,
+    )
     token = secrets.token_urlsafe(32)
     allowed = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     if dev_origin is not None:
@@ -80,12 +96,18 @@ def create_app(
     @app.get("/api/catalog")
     def catalog():
         with session.lock:
-            return dict(session.catalog.snapshot(), llms=[c.public() for c in session.llm_configs.values()])
+            return dict(
+                session.catalog.snapshot(),
+                llms=[c.public() for c in session.llm_configs.values()],
+            )
 
     @app.post("/api/catalog/refresh")
     def refresh():
         with session.lock:
-            return dict(session.catalog.refresh(), llms=[c.public() for c in session.llm_configs.values()])
+            return dict(
+                session.catalog.refresh(),
+                llms=[c.public() for c in session.llm_configs.values()],
+            )
 
     @app.post("/api/page")
     def page(body: dict):
@@ -103,6 +125,8 @@ def create_app(
             body.get("mode"),
             body.get("opponents"),
             body.get("spectator", False),
+            temperature=body.get("temperature"),
+            top_p=body.get("top_p"),
         )
 
     @app.post("/api/table/action")
@@ -169,6 +193,8 @@ def serve(options):
         load_timeout=options.load_timeout,
         decision_timeout=options.decision_timeout,
         llm_config=options.llm_config,
+        temperature=getattr(options, "temperature", DEFAULT_INFERENCE_TEMPERATURE),
+        top_p=getattr(options, "top_p", DEFAULT_INFERENCE_TOP_P),
     )
     print(f"网页对局：http://127.0.0.1:{options.port} （{options.device}）", flush=True)
     try:

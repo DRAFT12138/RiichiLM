@@ -260,6 +260,85 @@ mod unit_tests {
     }
 
     #[test]
+    fn test_exhaustive_draw_all_tenpai_after_riichi_clears_riichi_delta_4p() {
+        use serde_json::Value;
+
+        let mut state = create_test_state(2);
+        state._initialize_round(0, 0, 0, 0, None, Some(vec![25000; 4]));
+        // Every seat holds a tenpai hand (123456789p 1234s -> waits on 1s/4s)
+        // with distinct physical tile copies.
+        let tenpai_tiles: [u8; 13] = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+        for (pid, player) in state.players.iter_mut().enumerate() {
+            player.hand = tenpai_tiles.iter().map(|t| t * 4 + pid as u8).collect();
+            player.nagashi_eligible = false;
+        }
+        // Simulate an already-accepted riichi by seat 3 earlier in the round.
+        state.players[3].score -= 1000;
+        state.players[3].score_delta = -1000;
+        state.players[3].riichi_declared = true;
+        state.riichi_sticks = 1;
+        state.mjai_log.clear();
+
+        state._trigger_ryukyoku("exhaustive_draw");
+
+        let v: Value = state
+            .mjai_log
+            .iter()
+            .rev()
+            .find_map(|s| {
+                let ev: Value = serde_json::from_str(s).ok()?;
+                (ev["type"] == "ryukyoku").then_some(ev)
+            })
+            .expect("ryukyoku event should be logged");
+        assert_eq!(v["reason"], "exhaustive_draw");
+        let deltas: Vec<i32> = serde_json::from_value(v["deltas"].clone()).expect("deltas");
+        assert_eq!(deltas, vec![0, 0, 0, 0]);
+        assert_eq!(
+            state.players.iter().map(|p| p.score).collect::<Vec<_>>(),
+            vec![25000, 25000, 25000, 24000]
+        );
+    }
+
+    #[test]
+    fn test_nagashi_mangan_after_riichi_policy_external_rounds_deltas_4p() {
+        use serde_json::Value;
+
+        let mut state = create_test_state(2);
+        state.policy_external_rounds = true;
+        state._initialize_round(0, 0, 0, 0, None, Some(vec![25000; 4]));
+        let noten_tiles: [u8; 13] = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 27];
+        for (pid, player) in state.players.iter_mut().enumerate() {
+            player.hand = noten_tiles.iter().map(|t| t * 4 + pid as u8).collect();
+            player.nagashi_eligible = pid == 2;
+        }
+        // Seat 0 already had reach_accepted (-1000).
+        state.players[0].score -= 1000;
+        state.players[0].score_delta = -1000;
+        state.players[0].riichi_declared = true;
+        state.riichi_sticks = 1;
+        state.mjai_log.clear();
+
+        state._trigger_ryukyoku("exhaustive_draw");
+
+        let v: Value = state
+            .mjai_log
+            .iter()
+            .rev()
+            .find_map(|s| {
+                let ev: Value = serde_json::from_str(s).ok()?;
+                (ev["type"] == "ryukyoku").then_some(ev)
+            })
+            .expect("ryukyoku event should be logged");
+        assert_eq!(v["reason"], "nagashimangan");
+        let deltas: Vec<i32> = serde_json::from_value(v["deltas"].clone()).expect("deltas");
+        assert_eq!(deltas, vec![-4000, -2000, 8000, -2000]);
+        assert_eq!(
+            state.players.iter().map(|p| p.score).collect::<Vec<_>>(),
+            vec![20000, 23000, 33000, 23000]
+        );
+    }
+
+    #[test]
     fn test_is_tenpai() {
         use crate::hand_evaluator::HandEvaluator;
         // 111,222,333m, 444p, 11s (Tenpai on 1s)
@@ -268,6 +347,32 @@ mod unit_tests {
         assert!(calc.is_tenpai());
         let waits = calc.get_waits_u8();
         assert!(waits.contains(&18)); // 1s
+    }
+
+    #[test]
+    fn test_is_tenpai_excludes_self_exhausted_meld_wait() {
+        use crate::hand_evaluator::HandEvaluator;
+        use crate::types::{Meld, MeldType};
+        // Standing hand: 2m 3m 4m 4p 4p 6p 8p (kanchan wait solely on 7p = tile_34 15).
+        // Melds: 456s chi + 7p ankan (all 4 copies of 7p held in own meld -> karaten/noten).
+        let hand = vec![4, 8, 12, 48, 49, 56, 64];
+        let melds = vec![
+            Meld::new(MeldType::Chi, vec![84, 88, 92], true, 0, Some(88)),
+            Meld::new(MeldType::Ankan, vec![60, 61, 62, 63], false, -1, None),
+        ];
+        let calc = HandEvaluator::new(hand, melds);
+        assert!(calc.get_waits_u8().is_empty());
+        assert!(!calc.is_tenpai());
+
+        // Pon of 7p (3 copies) + 1 copy of 7p in standing hand waiting solely on 7p tanki -> also noten.
+        let hand_pon = vec![4, 8, 12, 48, 49, 50, 63];
+        let melds_pon = vec![
+            Meld::new(MeldType::Chi, vec![84, 88, 92], true, 0, Some(88)),
+            Meld::new(MeldType::Pon, vec![60, 61, 62], true, 0, Some(60)),
+        ];
+        let calc_pon = HandEvaluator::new(hand_pon, melds_pon);
+        assert!(calc_pon.get_waits_u8().is_empty());
+        assert!(!calc_pon.is_tenpai());
     }
 
     #[test]

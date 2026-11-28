@@ -80,6 +80,7 @@ def test_incomplete_view_and_cancelled_or_expired_decisions_do_not_call_model():
 
 @pytest.mark.parametrize("kwargs", [dict(max_attempts=0), dict(max_attempts=6), dict(max_tokens=True),
     dict(request_timeout=float("nan")), dict(temperature=float("inf")),
+    dict(top_p=0), dict(top_p=1.2), dict(top_p=True),
     dict(base_url="https://key:secret@service.invalid/v1"), dict(base_url="https://service.invalid/v1?key=secret"),
     dict(api_key_env="literal-secret!"), dict(id="llm:bad"), dict(token_limit_field="invalid")])
 def test_invalid_llm_configuration(kwargs):
@@ -112,9 +113,15 @@ def test_real_http_request_authentication_payload_and_token_usage(llm_server, mo
     assert choose(player).execution_ref in {m.execution_ref for m in view().legal_moves}
     call = llm_server.calls[0]
     assert call["path"] == "/v1/chat/completions" and call["authorization"] == "Bearer test-secret"
-    assert call["body"]["max_completion_tokens"] == 512 and "temperature" not in call["body"]
+    assert call["body"]["max_completion_tokens"] == 512 and "temperature" not in call["body"] and "top_p" not in call["body"]
     assert player.stats["prompt_tokens"] == 20 and player.stats["completion_tokens"] == 5
     assert "test-secret" not in json.dumps(call["body"])
+
+    c_sampled = LLMConfig(id="test2", name="Test", model="served-model", base_url=llm_server.url,
+                          temperature=0.6, top_p=0.85)
+    assert choose(LLMPlayer(c_sampled)).execution_ref in {m.execution_ref for m in view().legal_moves}
+    assert llm_server.calls[1]["body"]["temperature"] == 0.6
+    assert llm_server.calls[1]["body"]["top_p"] == 0.85
 
 
 def test_http_transient_failures_retry_but_auth_errors_fail_without_body_leak(llm_server):

@@ -197,7 +197,7 @@ impl HandEvaluator3P {
         }
         let mut hand_14 = self.hand.clone();
         for i in 0..crate::types::TILE_MAX {
-            if hand_14.counts[i] < 4 {
+            if self.full_hand.counts[i] < 4 {
                 hand_14.add(i as u8);
                 if agari::is_agari(&mut hand_14) {
                     return true;
@@ -216,7 +216,7 @@ impl HandEvaluator3P {
         }
         let mut hand_14 = self.hand.clone();
         for i in 0..crate::types::TILE_MAX {
-            if hand_14.counts[i] < 4 {
+            if self.full_hand.counts[i] < 4 {
                 hand_14.add(i as u8);
                 if crate::agari::is_agari(&mut hand_14) {
                     waits.push(i as u8);

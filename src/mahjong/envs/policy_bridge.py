@@ -25,6 +25,19 @@ HISTORY_KINDS = frozenset(('EV_DRAW', 'EV_DISCARD', 'EV_CHI', 'EV_PON', 'EV_DAIM
     'EV_ANKAN_ATTEMPT', 'EV_KAKAN_ATTEMPT', 'EV_KAN_COMMIT', 'EV_DORA_REVEAL',
     'EV_RIICHI_DECLARE', 'EV_RIICHI_ACCEPT'))
 
+_MJAI_TO_FIRST_TID = None
+
+
+def _get_mjai_to_first_tid():
+    global _MJAI_TO_FIRST_TID
+    if _MJAI_TO_FIRST_TID is None:
+        from riichienv.convert import tid_to_mjai
+        mapping = {}
+        for t in range(136):
+            mapping.setdefault(tid_to_mjai(t), t)
+        _MJAI_TO_FIRST_TID = mapping
+    return _MJAI_TO_FIRST_TID
+
 
 @dataclass(frozen=True)
 class ObservedEvent:
@@ -67,7 +80,8 @@ class RiichiDecisionBridge:
     def __init__(self, profile, *, model_binding_digest):
         from riichienv import GameRule, RiichiEnv
         self._profile = deepcopy(profile)
-        if digest(self._profile) not in self._supported_profiles:
+        self._profile_digest = digest(self._profile)
+        if self._profile_digest not in self._supported_profiles:
             fail('UNSUPPORTED_PROFILE', 'only the reviewed complete source profile is supported')
         self._options = offline_options_from_profile(self._profile,
             dict(revision='mjai/recorded-deltas-1', settlement_deltas='per_event'))
@@ -107,6 +121,8 @@ class RiichiDecisionBridge:
         self._builder = None
         self._session = OfflineSession(self._options, rule=self._rule)
         self._views, self._plans = {}, {}
+        self._round_encode_cache = None
+        self._view_legal_meta = {}
         self._valid = True
         self._status = 'advanced'
         self._round_outcome = None
@@ -129,18 +145,30 @@ class RiichiDecisionBridge:
 
     @staticmethod
     def _mask_fact(fact, viewer):
-        value = deepcopy(fact)
-        if value['type'] == 'start_kyoku':
-            value['tehais'] = [hand if p == viewer else ['?']*len(hand)
-                               for p, hand in enumerate(value['tehais'])]
-        if value['type'] == 'tsumo' and value['actor'] != viewer:
+        kind = fact['type']
+        if kind == 'start_kyoku':
+            value = dict(fact)
+            value['tehais'] = [hand if p == viewer else ['?'] * len(hand)
+                               for p, hand in enumerate(fact['tehais'])]
+            return value
+        if kind == 'tsumo' and fact['actor'] != viewer:
+            value = dict(fact)
             value['pai'] = '?'
-        return value
+            return value
+        return fact
 
     def _capture(self, returned, actions, before):
         """Read original returned batches first, then exactly once for other seats."""
-        logs = self._native.mjai_log
-        new = logs[self._log_offset:]
+        if hasattr(self._native, 'mjai_log_slice_raw'):
+            raw_new = self._native.mjai_log_slice_raw(self._log_offset)
+            new = [json.loads(e) for e in raw_new]
+            log_len = self._log_offset + len(raw_new)
+        else:
+            logs = self._native.mjai_log
+            new = logs[self._log_offset:]
+            log_len = len(logs)
+        fact_jsons = [json.dumps(e, sort_keys=True) for e in new]
+        masked_tsumo_json = {}
         observations = []
         batch = dict(returned)
         for viewer in range(4):
@@ -150,22 +178,50 @@ class RiichiDecisionBridge:
             if events != [self._mask_fact(e, viewer) for e in new]:
                 fail('EVENT_STREAM_INCOMPLETE', 'native incremental stream differs from ordered facts', viewer=viewer)
             for order, value in enumerate(events):
+                raw_fact = new[order]
+                if value == raw_fact:
+                    p_json = fact_jsons[order]
+                elif raw_fact['type'] == 'tsumo' and raw_fact['actor'] != viewer:
+                    p_json = masked_tsumo_json.get(order)
+                    if p_json is None:
+                        p_json = json.dumps(value, sort_keys=True)
+                        masked_tsumo_json[order] = p_json
+                else:
+                    p_json = json.dumps(value, sort_keys=True)
                 observations.append(ObservedEvent(self._instance, self._seq, viewer, order,
-                    (self._seq, order), json.dumps(value, sort_keys=True)))
+                    (self._seq, order), p_json))
         transition = NativeTransition(self._instance, self._seq, before, str(self._native.phase),
             tuple((p, json.dumps(a.to_dict(), sort_keys=True)) for p, a in sorted(actions.items())),
-            tuple(json.dumps(e, sort_keys=True) for e in new), tuple(observations))
-        self._ingest_transition(transition, actions=actions)
+            tuple(fact_jsons), tuple(observations))
+        self._ingest_transition(transition, actions=actions, _parsed_facts=new)
         if self._evidence_sink is not None:
             self._evidence_sink.append(transition)
-        self._log_offset = len(logs)
+        self._log_offset = log_len
         self._seq += 1
         self._batch = batch
 
-    def _ingest_transition(self, transition, *, actions=None):
+    def _ingest_transition(self, transition, *, actions=None, _parsed_facts=None):
         self._check()
         key = (transition.env_instance_id, transition.transition_seq)
-        signature = digest(asdict(transition))
+        signature = digest({
+            'env_instance_id': transition.env_instance_id,
+            'transition_seq': transition.transition_seq,
+            'before_phase': transition.before_phase,
+            'after_phase': transition.after_phase,
+            'accepted_actions': transition.accepted_actions,
+            'facts': transition.facts,
+            'observations': [
+                {
+                    'env_instance_id': o.env_instance_id,
+                    'transition_seq': o.transition_seq,
+                    'viewer': o.viewer,
+                    'event_order': o.event_order,
+                    'fact_ref': o.fact_ref,
+                    'payload_json': o.payload_json,
+                }
+                for o in transition.observations
+            ],
+        })
         previous = self._transition_hashes.get(key)
         if previous is not None:
             if previous != signature:
@@ -181,7 +237,7 @@ class RiichiDecisionBridge:
                 self._valid = False
                 fail('EVENT_STREAM_INCOMPLETE', 'conflicting observation envelope')
             self._observed[identity] = observed
-        facts = [json.loads(e) for e in transition.facts]
+        facts = list(_parsed_facts) if _parsed_facts is not None else [json.loads(e) for e in transition.facts]
         # Native ankan has no log until commit; kakan logs its premature upgrade.
         # The accepted action is the authoritative public attempt in both cases.
         attempts = []
@@ -394,9 +450,18 @@ class RiichiDecisionBridge:
             return Action('A_KAKAN', (matches[0]['meld_id'], tile))
         fail('ACTION_UNREPRESENTABLE', f'unmapped native action {kind}')
 
+    def _assemble_view_prefix(self, viewer, current_prefix_ids):
+        return current_prefix_ids
+
     def _publish(self):
         from riichienv import ActionType, Phase
         self._views, self._plans = {}, {}
+        view_legal_meta = getattr(self, '_view_legal_meta', None)
+        if view_legal_meta is None:
+            view_legal_meta = {}
+            self._view_legal_meta = view_legal_meta
+        else:
+            view_legal_meta.clear()
         if self._status != 'advanced':
             return
         builder = self._builder
@@ -404,6 +469,26 @@ class RiichiDecisionBridge:
         if response and builder.pending_window is None:
             fail('EVENT_STREAM_INCOMPLETE', 'response phase without canonical window')
         viewers = builder.pending_window['viewers'] if response else [self._native.current_player]
+        snapshot = self._session.snapshot()
+        profile_digest = getattr(self, '_profile_digest', None)
+        if profile_digest is None:
+            profile_digest = digest(self._profile)
+            self._profile_digest = profile_digest
+        round_cache = getattr(self, '_round_encode_cache', None)
+        if round_cache is None or round_cache['builder'] is not builder:
+            round_cache = {'builder': builder, 'headers': {}, 'cursors': {}, 'histories': {}}
+            self._round_encode_cache = round_cache
+        codec = self._codec
+        ids = codec._ids
+        bos_id = ids['BOS']
+        fmt_id = ids['FORMAT_V1']
+        task_id = ids['TASK_POLICY']
+        hist_id = ids['HISTORY']
+        full_hist_id = ids['FULL_HISTORY']
+        end_hist_id = ids['END_HISTORY']
+        decision_id = ids['DECISION']
+        num_events = len(builder.events)
+
         for viewer in viewers:
             native_actions = self._native._get_legal_actions(viewer)
             normalized = {}
@@ -415,31 +500,61 @@ class RiichiDecisionBridge:
                     if not plans:
                         fail('LEGAL_SET_INCOMPLETE', 'riichi declaration has no legal discard')
                 for action, plan in plans:
-                    suffix = tuple(self._codec.encode_action_suffix(action))
+                    suffix = codec._encode_action_suffix_tuple(action)
                     if suffix in normalized and normalized[suffix][0] != action:
                         fail('ACTION_UNREPRESENTABLE', 'semantic action encoding collision')
                     # Native order is physical-ID sorted; explicitly select a
                     # stable representative independent of enumeration order.
-                    signature = lambda p: tuple((int(a.action_type), -1 if a.tile is None else a.tile,
-                                                  tuple(a.consume_tiles)) for a in p)
-                    if suffix not in normalized or signature(plan) < signature(normalized[suffix][1]):
-                        normalized[suffix] = (action, plan)
+                    sig = tuple((int(a.action_type), -1 if a.tile is None else a.tile,
+                                 tuple(a.consume_tiles)) for a in plan)
+                    prev = normalized.get(suffix)
+                    if prev is None or sig < prev[2]:
+                        normalized[suffix] = (action, plan, sig)
             if not normalized:
                 fail('LEGAL_SET_EMPTY', 'native decision has no representable candidates', viewer=viewer)
             self._check_candidates(viewer, set(normalized), response=response)
             anchor = builder.anchors[viewer][-1]
             window_id = builder.pending_window['window_id'] if response else anchor.window_id
             key = DecisionKey(WindowKey(self._instance, self._game, self._round, window_id, self._revision), viewer)
-            history = [project_event(e, viewer, ankan_public=self._options.ankan_public)
-                       for e in builder.events if e.kind in HISTORY_KINDS]
-            sequence = PolicySequenceInput(project_header(builder.initial, viewer, self._options.mode),
-                                            history, project_hand(self._session.snapshot(), viewer))
+
+            header_tokens = round_cache['headers'].get(viewer)
+            if header_tokens is None:
+                header_tokens = tuple(codec.encode_header(project_header(builder.initial, viewer, self._options.mode)))
+                round_cache['headers'][viewer] = header_tokens
+
+            cursor = round_cache['cursors'].get(viewer, 0)
+            hist_tokens = round_cache['histories'].get(viewer)
+            if hist_tokens is None or cursor > num_events:
+                cursor = 0
+                hist_tokens = []
+                round_cache['histories'][viewer] = hist_tokens
+            if cursor < num_events:
+                ankan_public = self._options.ankan_public
+                for e in builder.events[cursor:]:
+                    if e.kind in HISTORY_KINDS:
+                        hist_tokens.extend(codec.encode_event(project_event(e, viewer, ankan_public=ankan_public)))
+                round_cache['cursors'][viewer] = num_events
+
+            hand_tokens = codec.encode_hand_state(project_hand(snapshot, viewer))
+            current_prefix_ids = (
+                bos_id, fmt_id, task_id,
+                *header_tokens,
+                hist_id, full_hist_id, *hist_tokens, end_hist_id,
+                *hand_tokens, decision_id,
+            )
+            prefix_ids = self._assemble_view_prefix(viewer, current_prefix_ids)
+
+            sorted_items = sorted(normalized.items())
             moves = []
-            for index, (suffix, (action, plan)) in enumerate(sorted(normalized.items())):
+            for index, (suffix, (action, plan, _)) in enumerate(sorted_items):
                 ref = str(index)
                 moves.append(LegalMove(action, ref))
                 self._plans[(key, ref)] = plan
-            self._views[viewer] = DecisionView(key, sequence, moves, digest(self._profile), True)
+            moves_tuple = tuple(moves)
+            sorted_suffixes = tuple(suffix for suffix, _ in sorted_items)
+            view = DecisionView._from_encoded(key, prefix_ids, moves_tuple, profile_digest, True)
+            self._views[viewer] = view
+            view_legal_meta[viewer] = (view, sorted_suffixes, legal_digest(view, sorted_suffixes))
 
     def bind_controllers(self, controllers):
         """Fix controller bindings before reset, without inventing Actor probabilities."""
@@ -609,8 +724,14 @@ class RiichiDecisionBridge:
         original = self._views.get(view.key.viewer)
         if original is None or original != view or result.key != original.key:
             fail('STALE_DECISION', 'view/result differs from current frozen decision')
-        suffixes = tuple(sorted(tuple(self._codec.encode_action_suffix(m.action)) for m in original.legal_moves))
-        if (result.legal_set_digest != legal_digest(original, suffixes)
+        meta_map = getattr(self, '_view_legal_meta', None)
+        meta = meta_map.get(original.key.viewer) if meta_map is not None else None
+        if meta is not None and meta[0] is original:
+            suffixes, expected_legal_digest = meta[1], meta[2]
+        else:
+            suffixes = tuple(sorted(self._codec._encode_action_suffix_tuple(m.action) for m in original.legal_moves))
+            expected_legal_digest = legal_digest(original, suffixes)
+        if (result.legal_set_digest != expected_legal_digest
                 or result.model_binding_digest != (self._model_binding if self._seat_bindings is None else self._seat_bindings[view.key.viewer][0])
                 or (self._seat_bindings is not None and result.actor_ref != self._seat_bindings[view.key.viewer][1])
                 or type(result.candidate_index) is not int or not 0 <= result.candidate_index < len(suffixes)
@@ -621,8 +742,12 @@ class RiichiDecisionBridge:
                 or not math.isclose(math.fsum(result.token_logprobs), result.model_action_logprob, abs_tol=1e-6)):
             fail('CONTRACT_MISMATCH', 'generation differs from frozen binding/legal set')
         action = self._codec.decode_action_suffix(result.suffix_ids)
-        move = next((m for m in original.legal_moves if m.action == action), None)
-        if move is None or tuple(self._codec.encode_action_suffix(action)) != result.suffix_ids:
+        cand = original.legal_moves[result.candidate_index] if result.candidate_index < len(original.legal_moves) else None
+        if cand is not None and cand.action == action:
+            move = cand
+        else:
+            move = next((m for m in original.legal_moves if m.action == action), None)
+        if move is None or self._codec._encode_action_suffix_tuple(action) != result.suffix_ids:
             fail('ACTION_UNREPRESENTABLE', 'generated action differs from frozen execution mapping')
         return EnvDecision(original.key, move.action, move.execution_ref, result)
 
@@ -642,7 +767,7 @@ class RiichiDecisionBridge:
         try:
             for actions in plans:
                 before = str(self._native.phase)
-                old_log = len(self._native.mjai_log)
+                old_log = self._log_offset
                 # Verify every exact physical action against the live legal set.
                 for player, action in actions.items():
                     if action.to_dict() not in [a.to_dict() for a in self._native._get_legal_actions(player)]:
@@ -664,7 +789,10 @@ class RiichiDecisionBridge:
                             kan_kind=None if pending is None else pending['kind'])
                         self._session.furiten.observe(player, riichi=player in self._session.accepted,
                             ron_available=available, choice=choices[action.action_type])
-                if len(self._native.mjai_log) == old_log and not returned:
+                log_len = (self._native.mjai_log_len()
+                           if hasattr(self._native, 'mjai_log_len')
+                           else len(self._native.mjai_log))
+                if not returned and log_len == old_log:
                     fail('ENVIRONMENT_STEP_FAILED', 'native transition did not advance')
                 self._capture(returned, actions, before)
             self._revision += 1
@@ -744,7 +872,7 @@ class RiichiDecisionBridge:
             source = int(self._builder.ir_windows[window['window_id']]['source'].name[-1])
             pending = session.pending
             tile = pending['event'].get('pai', pending['reserved'][0]) if pending else session.last_discard['pai']
-            tid = next(t for t in range(136) if tid_to_mjai(t) == tile)
+            tid = _get_mjai_to_first_tid()[tile]
             if pending is None:
                 actions = [(a,False) for a in mirror.policy_claim_actions(viewer,source,tid)
                            if a.action_type != ActionType.RON]
@@ -763,14 +891,14 @@ class RiichiDecisionBridge:
         expected = set()
         for a, riichi in actions:
             action = self._normalize(a, viewer, riichi=riichi, environment=mirror)
-            expected.add(tuple(self._codec.encode_action_suffix(action)))
+            expected.add(self._codec._encode_action_suffix_tuple(action))
             # MJAI has tile names, so ordinary physical copies can share an ID
             # in the replay state. A held copy of the drawn tile also permits
             # TEDASHI; accepted riichi still permits only the actual draw.
             if (action.kind in ('A_DISCARD','A_RIICHI_DISCARD') and action.args[1] == Atom('TSUMOGIRI')
                     and viewer not in session.accepted and mirror.hands[viewer].count(a.tile) > 1):
                 alternative = Action(action.kind, (action.args[0], Atom('TEDASHI')))
-                expected.add(tuple(self._codec.encode_action_suffix(alternative)))
+                expected.add(self._codec._encode_action_suffix_tuple(alternative))
         if actual != expected:
             fail('LEGAL_SET_INCOMPLETE', 'native complete candidates differ from project replay',
                  viewer=viewer, missing=[list(s) for s in sorted(expected-actual)],

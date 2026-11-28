@@ -804,6 +804,19 @@ impl RiichiEnv {
         Ok(list.unbind().into())
     }
 
+    pub fn mjai_log_len(&self) -> usize {
+        with_variant!(self, |s| s.mjai_log.len())
+    }
+
+    pub fn mjai_log_slice_raw(&self, start: usize) -> Vec<String> {
+        let log: &Vec<String> = with_variant!(self, |s| &s.mjai_log);
+        if start >= log.len() {
+            Vec::new()
+        } else {
+            log[start..].to_vec()
+        }
+    }
+
     #[pyo3(signature = (players=None))]
     pub fn get_observations<'py>(
         &mut self,

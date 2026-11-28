@@ -5,6 +5,7 @@ import time
 import torch
 from mahjong.contracts import MahjongError, derive_seed
 from mahjong.inference.policy import DecodeOptions
+from mahjong.inference.prefix_cache import PrefixCache
 from mahjong.inference.actor_loading import new_actor_bridge
 from mahjong.rl.storage import EpisodeWriter
 from mahjong.policy.execution import policy_precision, sampling_definition
@@ -15,7 +16,8 @@ def seed(root, domain, episode, seat=None):
 
 
 def collect(run_dir, actors, *, root_seed, episode, learner, limits, header, cancel=lambda: False,
-            strategy='categorical', environment_seed=None, sampling_episode=None):
+            strategy='categorical', environment_seed=None, sampling_episode=None,
+            use_prefix_cache=False):
     started = time.monotonic()
     deadline = started + limits['max_seconds']
     env_seed = seed(root_seed, 'environment', episode) if environment_seed is None else environment_seed
@@ -30,6 +32,19 @@ def collect(run_dir, actors, *, root_seed, episode, learner, limits, header, can
         environment_seed=env_seed, sampling_seeds=[g.initial_seed() for g in generators]))
     counts = dict(decisions=0, action_tokens=0, transitions=0, windows=0, hands=0, wins=0, deal_ins=0)
     bridge = new_actor_bridge(actors)
+    caches = [PrefixCache() for _ in range(4)] if use_prefix_cache else None
+
+    def cache_stats():
+        if caches is None:
+            return dict(enabled=False, hits=0, reused_tokens=0, prefill_tokens=0, evictions=0)
+        snaps = [c.snapshot() for c in caches]
+        return dict(
+            enabled=True,
+            hits=sum(s['hits'] for s in snaps),
+            reused_tokens=sum(s['reused_tokens'] for s in snaps),
+            prefill_tokens=sum(s['prefill_tokens'] for s in snaps),
+            evictions=sum(s['evictions'] for s in snaps),
+        )
 
     def check():
         if cancel():
@@ -73,8 +88,11 @@ def collect(run_dir, actors, *, root_seed, episode, learner, limits, header, can
                 p = view.key.viewer
                 actor = actors[p]
                 request = actor.prepare(view)
-                generated = actor.generate(request, options=DecodeOptions(strategy), generator=generators[p],
-                                           cancel=cancel, deadline_monotonic=deadline)
+                generate_kwargs = dict(options=DecodeOptions(strategy), generator=generators[p],
+                                       cancel=cancel, deadline_monotonic=deadline)
+                if caches is not None:
+                    generate_kwargs['prefix_cache'] = caches[p]
+                generated = actor.generate(request, **generate_kwargs)
                 decision = bridge.bind_result(view, generated)
                 decisions[p] = decision
                 writer.write(dict(type='decision', key=f'd{counts["decisions"]}',
@@ -96,7 +114,8 @@ def collect(run_dir, actors, *, root_seed, episode, learner, limits, header, can
             evidence(item, asdict(views[0].key.window))
         ref = writer.publish(item['after']['scores'], item['ranks'])
         return dict(status='complete', ref=ref, **counts, seconds=time.monotonic()-started,
-                    final_scores=list(item['after']['scores']), ranks=item['ranks'], learner=learner)
+                    final_scores=list(item['after']['scores']), ranks=item['ranks'], learner=learner,
+                    prefix_cache_stats=cache_stats())
     except Exception as exc:
         try:
             writer.write(dict(type='failure', key='failure', reason=getattr(exc, 'code', type(exc).__name__),
@@ -106,4 +125,9 @@ def collect(run_dir, actors, *, root_seed, episode, learner, limits, header, can
         writer.abort()
         return dict(status='cancelled' if getattr(exc, 'code', None)=='CANCELLED' else 'failed',
                     reason=getattr(exc, 'code', type(exc).__name__), message=str(exc),
-                    **counts, seconds=time.monotonic()-started, learner=learner)
+                    **counts, seconds=time.monotonic()-started, learner=learner,
+                    prefix_cache_stats=cache_stats())
+    finally:
+        if caches is not None:
+            for cache in caches:
+                cache.clear()

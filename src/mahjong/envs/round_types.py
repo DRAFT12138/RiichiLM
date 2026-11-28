@@ -5,6 +5,17 @@ from copy import deepcopy
 from mahjong.tokenizer import Event, HandMeldState
 
 
+def _copy_hand_meld_state(state):
+    if type(state) is HandMeldState:
+        copied_melds = [
+            {k: (list(v) if type(v) is list else deepcopy(v) if isinstance(v, (dict, set)) else v)
+             for k, v in m.items()}
+            for m in state.melds
+        ]
+        return HandMeldState(list(state.hands), copied_melds)
+    return deepcopy(state)
+
+
 VISIBLE = frozenset(('EV_DRAW', 'EV_DISCARD', 'EV_CHI', 'EV_PON',
     'EV_DAIMINKAN', 'EV_ANKAN_ATTEMPT', 'EV_KAKAN_ATTEMPT', 'EV_KAN_COMMIT',
     'EV_DORA_REVEAL', 'EV_RIICHI_DECLARE', 'EV_RIICHI_ACCEPT'))
@@ -19,7 +30,7 @@ class FrozenAnchor:
 
     @classmethod
     def capture(cls, window_id, trigger_id, cutoff_event_id, state):
-        return cls(window_id, trigger_id, cutoff_event_id, deepcopy(state))
+        return cls(window_id, trigger_id, cutoff_event_id, _copy_hand_meld_state(state))
 
 
 @dataclass

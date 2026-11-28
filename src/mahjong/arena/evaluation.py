@@ -10,6 +10,11 @@ import time
 import traceback
 
 from mahjong.contracts import MahjongError
+from mahjong.inference.sampling import (
+    DEFAULT_INFERENCE_TEMPERATURE,
+    DEFAULT_INFERENCE_TOP_P,
+    validate_sampling_params,
+)
 from .llm import LLMPlayer, PROMPT_VERSION, SYSTEM_PROMPT, load_llm_configs
 from .loop import DecisionLoop
 from .players import ModelPlayer, RandomPlayer, load_model_policy
@@ -70,6 +75,10 @@ def evaluate_cli(options, *, cancel=None, on_match=None):
             or options.max_windows <= 0 or len(set(options.seeds)) != len(options.seeds)
             or any(not 0 <= seed < 2**32 for seed in options.seeds)):
         raise MahjongError("CONFIG_INVALID", "评估需要有限正数时限、窗口预算及不重复的32位无符号种子")
+    temperature, top_p = validate_sampling_params(
+        getattr(options, "temperature", DEFAULT_INFERENCE_TEMPERATURE),
+        getattr(options, "top_p", DEFAULT_INFERENCE_TOP_P),
+    )
     output = Path(options.output)
     if output.exists():
         raise MahjongError("CONFIG_INVALID", "评估报告已存在，请使用新路径")
@@ -112,6 +121,7 @@ def evaluate_cli(options, *, cancel=None, on_match=None):
     for seed in options.seeds:
         for rotation in range(4 if options.rotate else 1):
             order = [(seat - rotation) % 4 for seat in range(4)]
+            bridge = ArenaDecisionBridge(profile_for(options.mode), model_binding_digest="arena-non-model")
             players, controllers = [], []
             for seat, index in enumerate(order):
                 spec = options.players[index]
@@ -124,9 +134,9 @@ def evaluate_cli(options, *, cancel=None, on_match=None):
                     controllers.append(("llm", None))
                 else:
                     derived = int.from_bytes(hashlib.sha256(f"arena/model-sampling/v1:{seed}:{seat}".encode()).digest()[:8], "big")
-                    players.append(ModelPlayer(policies[spec], seed=derived, memory_budget=memory_budget))
+                    players.append(ModelPlayer(policies[spec], seed=derived, memory_budget=memory_budget,
+                                               temperature=temperature, top_p=top_p))
                     controllers.append(("model", policies[spec]))
-            bridge = ArenaDecisionBridge(profile_for(options.mode), model_binding_digest="arena-non-model")
             bridge.bind_controllers(controllers)
             print(f"seed={seed} rotation={rotation} started", flush=True)
             outcome = run_match(bridge, players, seed=seed, single_round=options.mode == "single",
@@ -167,7 +177,8 @@ def evaluate_cli(options, *, cancel=None, on_match=None):
                   seeds=options.seeds, rotate=options.rotate, decision_timeout=options.decision_timeout,
                   max_windows=options.max_windows, outcomes=outcomes, seed_groups=groups,
                   completed_seed_groups=len(groups), failed_matches=sum(o["status"] != "complete" for o in outcomes),
-                  model_sampling="categorical", strength_claim=False,
+                  model_sampling="categorical", model_temperature=temperature, model_top_p=top_p,
+                  strength_claim=False,
                   gpu_memory=memory_budget.snapshot(),
                   model_summaries=model_summaries(identities, outcomes, groups,
                                                  profile_for(options.mode)['initial_scores']))
@@ -183,15 +194,15 @@ def model_summaries(identities, outcomes, groups, initial_scores):
     """Group repeated model seats; only fully completed seed groups count."""
     from mahjong.inference.policy import digest
 
-    models = {}
+    entries = {}
     for index, identity in enumerate(identities):
         if identity['kind'] != 'model':
             continue
         key = digest(identity)
-        if key not in models:
-            models[key] = dict(identity=deepcopy(identity), player_indices=[],
-                               appearances=0, total_score=0, net_points=0, ranks=[])
-        models[key]['player_indices'].append(index)
+        if key not in entries:
+            entries[key] = dict(identity=deepcopy(identity), player_indices=[],
+                                appearances=0, total_score=0, net_points=0, ranks=[])
+        entries[key]['player_indices'].append(index)
     complete_seeds = {g['seed'] for g in groups}
     for match in outcomes:
         if match['seed'] not in complete_seeds or match['status'] != 'complete':
@@ -200,14 +211,14 @@ def model_summaries(identities, outcomes, groups, initial_scores):
             identity = identities[index]
             if identity['kind'] != 'model':
                 continue
-            row = models[digest(identity)]
+            row = entries[digest(identity)]
             row['appearances'] += 1
             row['total_score'] += match['scores'][seat]
             row['net_points'] += match['scores'][seat] - initial_scores[seat]
             if match['ranks'] is not None:
                 row['ranks'].append(match['ranks'][seat])
     result = []
-    for row in models.values():
+    for row in entries.values():
         ranks = row.pop('ranks')
         count = row['appearances']
         row.update(mean_score=row['total_score'] / count if count else None,

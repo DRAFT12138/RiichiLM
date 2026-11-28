@@ -3,6 +3,7 @@
 from dataclasses import asdict
 from collections import deque
 import hashlib
+import json
 import math
 import resource
 import time
@@ -13,6 +14,11 @@ from mahjong.arena.llm import LLMConfig, LLMPlayer, plain
 from mahjong.arena.loop import DecisionLoop
 from mahjong.arena.players import ModelPlayer, RandomPlayer, load_model_policy
 from mahjong.arena.memory import ModelMemoryBudget
+from mahjong.inference.sampling import (
+    DEFAULT_INFERENCE_TEMPERATURE,
+    DEFAULT_INFERENCE_TOP_P,
+    validate_sampling_params,
+)
 
 
 class TableEngine:
@@ -22,6 +28,10 @@ class TableEngine:
         self.config, self.emit = config, emit
         self.mode = config["mode"]
         self.spectator = config.get("spectator", False)
+        self.temperature, self.top_p = validate_sampling_params(
+            config.get("temperature", DEFAULT_INFERENCE_TEMPERATURE),
+            config.get("top_p", DEFAULT_INFERENCE_TOP_P),
+        )
         self.viewer, self.paused, self.playback_interval = 0, False, 0.75
         self.decision_notes, self.pending_notes = deque(maxlen=64), []
         self.decision_timeout = decision_timeout
@@ -70,7 +80,13 @@ class TableEngine:
             controllers.append(("model", cache[key]))
             seat = len(controllers) - 1
             seed = int.from_bytes(hashlib.sha256(f"web-play/model-sampling/v1:{config['seed']}:{seat}".encode()).digest()[:8], "big")
-            players.append(ModelPlayer(cache[key], seed=seed, memory_budget=self.memory_budget))
+            players.append(ModelPlayer(
+                cache[key],
+                seed=seed,
+                memory_budget=self.memory_budget,
+                temperature=self.temperature,
+                top_p=self.top_p,
+            ))
         self.controllers = controllers
         self.bridge = WebDecisionBridge(
             profile_for(self.mode), model_binding_digest="web-non-model"
@@ -79,16 +95,17 @@ class TableEngine:
         self.bridge.reset(seed=config["seed"])
         self.timings["load_seconds"] = time.monotonic() - start
         for p in range(4):
-            if controllers[p][0] != "random":
-                continue
-            players[p] = RandomPlayer(
-                int.from_bytes(
-                    hashlib.sha256(
-                        f"web-play/random/v1:{config['seed']}:{p}".encode()
-                    ).digest(),
-                    "big",
+            kind_p = controllers[p][0]
+            if kind_p == "random":
+                players[p] = RandomPlayer(
+                    int.from_bytes(
+                        hashlib.sha256(
+                            f"web-play/random/v1:{config['seed']}:{p}".encode()
+                        ).digest(),
+                        "big",
+                    )
                 )
-            )
+        self.players = players
         self.loop = DecisionLoop(self.bridge, players, decision_timeout=decision_timeout,
                                  on_thinking=self._thinking, on_decision=self._record_decision)
         self.waiting = None
@@ -122,6 +139,8 @@ class TableEngine:
                     name=item["config"]["name"] if kind == "llm" else None,
                     model=item["config"]["model"] if kind == "llm" else None,
                     sampling="categorical" if kind == "model" else "uniform" if kind == "random" else None,
+                    temperature=self.temperature if kind == "model" else None,
+                    top_p=self.top_p if kind == "model" else None,
                 )
                 for (kind, model), item in zip(
                     self.controllers, self.controller_items
@@ -131,6 +150,7 @@ class TableEngine:
             state=self.status, mode=self.mode, thinking=thinking,
             timings=dict(self.timings), controllers=controllers, opponents=controllers[1:],
             gpu_memory=self.memory_budget.snapshot(),
+            temperature=self.temperature, top_p=self.top_p,
             spectator=self.spectator, viewer=self.viewer, paused=self.paused,
             playback_interval=self.playback_interval,
             decision_notes=[dict(n) for n in self.decision_notes if n["seat"] == self.viewer] if self.spectator else [],
@@ -177,8 +197,13 @@ class TableEngine:
             seat=view.key.viewer, round_id=view.key.window.round_id,
             revision=view.key.window.state_revision, candidate_id=result.execution_ref,
             action=plain(result.action), candidate_count=len(view.legal_moves),
-            summary=summary, summary_source="model_summary" if kind == "llm" and summary else "random_policy" if kind == "random" else None,
-            sampling="categorical" if kind == "model" else "uniform" if kind == "random" else "llm",
+            summary=summary,
+            summary_source=(
+                "model_summary" if kind == "llm" and summary
+                else "random_policy" if kind == "random"
+                else None
+            ),
+            sampling="categorical" if kind == "model" else "uniform" if kind == "random" else kind,
             selected_probability=probability, seconds=self.loop.last_decision_seconds,
         ))
 
@@ -254,6 +279,7 @@ class TableEngine:
 
 
 def run_worker(connection, config, device, decision_timeout):
+    engine = None
     try:
         import torch
 

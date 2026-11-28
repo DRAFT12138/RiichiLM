@@ -64,6 +64,7 @@ def test_script_exports_verifies_selects_opponents_and_persists_matches(weights,
     output = tmp_path / 'evaluation'
     monkeypatch.setattr(script.sys, 'argv', ['evaluate-checkpoint.py', '--checkpoint', str(source),
                       '--weights-root', str(root), '--games', '4', '--seeds', '123456',
+                      '--temperature', '0.55', '--top-p', '0.85',
                       '--device', 'cpu', '--output-dir', str(output)])
     monkeypatch.setattr(script.signal, 'signal', lambda *_: None)
 
@@ -71,6 +72,7 @@ def test_script_exports_verifies_selects_opponents_and_persists_matches(weights,
         assert [Path(p.split(':', 1)[1]).name for p in options.players] == [
             '3090_20w.pt', '3090_17w.pt', '3090_13w5.pt', '3090_10w.pt']
         assert options.seeds == [123456] and options.rotate and not cancel()
+        assert options.temperature == 0.55 and options.top_p == 0.85
         identities = [dict(kind='model', checkpoint_id=str(i)) for i in range(4)]
         for rotation in range(4):
             on_match(dict(seed=123456, rotation=rotation, status='complete',
@@ -85,4 +87,6 @@ def test_script_exports_verifies_selects_opponents_and_persists_matches(weights,
     assert config == exported_config and all(torch.equal(t, exported[k]) for k, t in state.items())
     assert len((output / 'matches.jsonl').read_text().splitlines()) == 4
     assert json.loads((output / 'progress.json').read_text())['counted_matches'] == 4
-    assert json.loads((output / 'provenance.json').read_text())['export_verified'] is True
+    prov = json.loads((output / 'provenance.json').read_text())
+    assert prov['export_verified'] is True
+    assert prov['temperature'] == 0.55 and prov['top_p'] == 0.85

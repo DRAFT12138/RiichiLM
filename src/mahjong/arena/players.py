@@ -3,9 +3,14 @@
 from dataclasses import dataclass
 import random
 import time
-from typing import Any, Protocol
+from typing import Protocol
 
 from mahjong.contracts import MahjongError
+from mahjong.inference.sampling import (
+    DEFAULT_INFERENCE_TEMPERATURE,
+    DEFAULT_INFERENCE_TOP_P,
+    validate_sampling_params,
+)
 
 
 def check_deadline(deadline, cancel=None):
@@ -17,9 +22,9 @@ def check_deadline(deadline, cancel=None):
 
 @dataclass(frozen=True)
 class PlayerChoice:
-    key: Any
+    key: object
     execution_ref: str | None = None
-    generation: Any = None
+    generation: object = None
     summary: str | None = None
 
 
@@ -39,10 +44,13 @@ class RandomPlayer:
 class ModelPlayer:
     """Preserve the checkpoint policy's generated-action binding and probabilities."""
 
-    def __init__(self, policy, *, seed=0, memory_budget=None):
+    def __init__(self, policy, *, seed=0, memory_budget=None,
+                 temperature=DEFAULT_INFERENCE_TEMPERATURE,
+                 top_p=DEFAULT_INFERENCE_TOP_P):
         import torch
         from mahjong.inference.prefix_cache import PrefixCache
 
+        self.temperature, self.top_p = validate_sampling_params(temperature, top_p, phase='inference')
         self.policy = policy
         self.generator = torch.Generator(device="cpu").manual_seed(seed)
         self.prefix_cache = PrefixCache()
@@ -55,8 +63,13 @@ class ModelPlayer:
 
         if self.memory_budget is not None:
             self.memory_budget.refresh()
+        options = DecodeOptions(
+            strategy="categorical",
+            temperature=self.temperature,
+            top_p=self.top_p,
+        )
         result = self.policy.generate(
-            self.policy.prepare(view), options=DecodeOptions(strategy="categorical"),
+            self.policy.prepare(view), options=options,
             generator=self.generator, deadline_monotonic=deadline, cancel=cancel,
             prefix_cache=self.prefix_cache if self.memory_budget is not None else None,
         )

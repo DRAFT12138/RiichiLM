@@ -9,6 +9,18 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 KOKUSHI_YAKU_IDS = frozenset((42,49))
+_MJAI_TO_FIRST_TID = None
+
+
+def _get_mjai_to_first_tid():
+    global _MJAI_TO_FIRST_TID
+    if _MJAI_TO_FIRST_TID is None:
+        from riichienv.convert import tid_to_mjai
+        mapping = {}
+        for t in range(136):
+            mapping.setdefault(tid_to_mjai(t), t)
+        _MJAI_TO_FIRST_TID = mapping
+    return _MJAI_TO_FIRST_TID
 NATIVE_RULE_FIELDS = frozenset((
     'is_kokushi_musou_13machi_double', 'is_suuankou_tanki_double',
     'is_junsei_chuurenpoutou_double', 'is_daisuushii_double',
@@ -232,6 +244,7 @@ class OfflineSession:
         self.ended = True
         self.header = None
         self.round_result = None
+        self._waits_cache = [None] * 4
 
     def _hands(self):
         from riichienv.convert import tid_to_mjai
@@ -252,12 +265,14 @@ class OfflineSession:
         if self.pending is not None:
             for tile in self.pending['reserved']:
                 hands[self.pending['actor']].remove(tile)
-        return deepcopy(dict(hands=hands,melds=self._melds(),pending=self.pending,
-                             scores=self.env.scores(),kyotaku=self.env.riichi_sticks,
-                             dora_indicators=[tid_to_mjai(t) for t in self.env.dora_indicators],
-                             dora_pending=self.dora_pending,
-                             live_remaining=self.env.live_remaining,
-                             rinshan_remaining=4-self.env.rinshan_draw_count))
+        pending = None if self.pending is None else deepcopy(self.pending)
+        dora_pending = [dict(d) for d in self.dora_pending] if self.dora_pending else []
+        return dict(hands=hands,melds=self._melds(),pending=pending,
+                    scores=list(self.env.scores()),kyotaku=self.env.riichi_sticks,
+                    dora_indicators=[tid_to_mjai(t) for t in self.env.dora_indicators],
+                    dora_pending=dora_pending,
+                    live_remaining=self.env.live_remaining,
+                    rinshan_remaining=4-self.env.rinshan_draw_count)
 
     def read_current_states(self):
         """One boundary read, four known hand/meld dicts or explicit unknowns.
@@ -301,8 +316,7 @@ class OfflineSession:
 
     def evaluate_win(self,actor,winning_tile,is_tsumo,*,chankan=False,all_candidates=False):
         from riichienv import Conditions,HandEvaluator
-        from riichienv.convert import tid_to_mjai
-        win_id=next(t for t in range(136) if tid_to_mjai(t)==winning_tile)
+        win_id=_get_mjai_to_first_tid()[winning_tile]
         reached=actor in self.accepted
         evaluator=HandEvaluator(self.env.hands[actor],self.env.melds[actor])
         evaluate=evaluator.calc_candidates if all_candidates else evaluator.calc
@@ -332,8 +346,19 @@ class OfflineSession:
     def furiten_state(self,actor):
         from .hand_rules import HandRules
         discard=None
-        if len(self.env.hands[actor])+3*len(self.env.melds[actor])==13:
-            waits=HandRules.waits(self.env.hands[actor],self.env.melds[actor])
+        hand = self.env.hands[actor]
+        melds = self.env.melds[actor]
+        if len(hand)+3*len(melds)==13:
+            hand_key = tuple(hand)
+            melds_key = tuple((int(m.meld_type), tuple(m.tiles)) for m in melds)
+            cache_slot = getattr(self, '_waits_cache', None)
+            cached = cache_slot[actor] if cache_slot is not None else None
+            if cached is not None and cached[0] == hand_key and cached[1] == melds_key:
+                waits = cached[2]
+            else:
+                waits = frozenset(HandRules.waits(hand, melds))
+                if cache_slot is not None:
+                    cache_slot[actor] = (hand_key, melds_key, waits)
             discard=bool(waits.intersection(t//4 for t in self.env.discards[actor]))
         return dict(discard=discard,temp=None if self.furiten is None else self.furiten.temp[actor],
                     riichi=None if self.furiten is None else self.furiten.riichi[actor])
@@ -538,6 +563,7 @@ class OfflineSession:
         self.rinshan_actor=None
         self.rinshan_meld=None
         self.dora_pending=[]
+        self._waits_cache=[None]*4
         self.ended=False
         self.check_inventory()
 

@@ -444,3 +444,136 @@ def test_old_transition_duplicate_is_idempotent_after_later_publication():
     assert before==(b._revision,b._seq,tuple(b._builder.events),dict(b._views))
     with pytest.raises(MahjongError,match='EVENT_STREAM_INCOMPLETE'):
         b._ingest_transition(replace(original,after_phase='conflicting old transition'))
+
+
+def test_exhaustive_draw_four_tenpai_after_riichi_settlement_conserves_points():
+    from riichienv import Phase
+    # All 4 seats hold the same 13-tile tanki tenpai on 9s, exhausting all 4 copies of 9s
+    # so no seat can ever tsumo or ron while tsumogiri-discarding through the entire wall.
+    tenpai_non_red = ['2m','3m','4m','5m','6m','7m','2p','3p','4p','6s','7s','8s','9s']
+    tenpai_with_red = ['2m','3m','4m','5mr','6m','7m','2p','3p','4p','6s','7s','8s','9s']
+    hands = {0: tenpai_with_red, 1: tenpai_non_red, 2: tenpai_non_red, 3: tenpai_non_red}
+    # Force one non-terminal discard per seat early so nagashi mangan cannot trigger.
+    b = rig(hands, drawn='6p', draws=['6p', '6p', '6p'])
+    # Seat 0 declares riichi on turn 1 by discarding drawn 6p.
+    v0 = b.snapshot(0)
+    riichi_move = next(m for m in v0.legal_moves if m.action.kind == 'A_RIICHI_DISCARD'
+                       and m.action.args[0].name == 'TILE_6p')
+    res = b.apply(select(b, v0, riichi_move))
+    while res.status == 'advanced':
+        if b._native.phase == Phase.WaitResponse:
+            views = [b.snapshot(p) for p in range(4) if b.snapshot(p) is not None]
+            responses = {v.key.viewer: select(b, v, next(m for m in v.legal_moves if m.action.kind == 'A_PASS'))
+                         for v in views}
+            res = b.apply_responses(views[0].key.window, responses)
+        else:
+            p = b._native.current_player
+            v = b.snapshot(p)
+            move = next((m for m in v.legal_moves if m.action.kind == 'A_DISCARD'
+                         and m.action.args[1].name == 'TSUMOGIRI'), None)
+            move = move or next(m for m in v.legal_moves if m.action.kind == 'A_DISCARD')
+            res = b.apply(select(b, v, move))
+    assert res.status == 'round_ended'
+    rr = b.round_result()
+    assert rr['kind'] == 'exhaustive'
+    assert rr['reason'] == 'exhaustive_draw'
+    assert rr['score_delta'] == [0, 0, 0, 0]
+    assert rr['scores'] == [24000, 25000, 25000, 25000]
+    assert rr['kyotaku'] == 1
+    assert sum(rr['scores']) + 1000 * rr['kyotaku'] == 100000
+
+
+def test_nagashi_mangan_after_riichi_settlement_conserves_points():
+    from riichienv import Phase
+    # Seat 0 is tenpai (tanki on 9s) and declares riichi on turn 1; seat 2 draws only
+    # terminals/honors for all 18 of its turns and achieves nagashi mangan.
+    tenpai_with_red = ['2m','3m','4m','5mr','6m','7m','2p','3p','4p','6s','7s','8s','9s']
+    noten = ['2m','3m','4m','5m','6m','7m','2p','3p','4p','6s','7s','8s','9s']
+    hands = {0: tenpai_with_red, 1: noten, 2: noten, 3: noten}
+    # 70 live draws: indices 0, 4, 8, ... go to seat 0; 1, 5, ... to seat 1;
+    # 2, 6, 10, ... (17 draws: indices 2,6,...,66) go to seat 2; 3, 7, ... to seat 3.
+    # Give seat 2 strictly terminals/honors on every turn, and non-terminals to seats 0,1,3 on turn 1.
+    terminals = ['1m','1m','1m','1m','9m','9m','9m','9m','1p','1p','1p','1p','9p','9p','9p','9p',
+                 '1s','1s']
+    non_terminals = ['6p','6p','6p','6p','7p','7p','7p','7p','8p','8p','8p','8p',
+                     '5pr','5p','5p','5p','2s','2s','2s','2s','3s','3s','3s','3s',
+                     '4s','4s','4s','4s','5sr','5s','5s','5s','8m','8m','8m','8m',
+                     '1s','1s','E','E','E','E','S','S','S','S','W','W','W','W','N','N','N']
+    seq_draws = []
+    t_idx = 0
+    nt_idx = 0
+    for draw_i in range(70):
+        seat_i = draw_i % 4
+        if seat_i == 2:
+            seq_draws.append(terminals[t_idx])
+            t_idx += 1
+        else:
+            seq_draws.append(non_terminals[nt_idx])
+            nt_idx += 1
+    b = rig(hands, drawn=seq_draws[0], draws=seq_draws[1:])
+    v0 = b.snapshot(0)
+    riichi_move = next(m for m in v0.legal_moves if m.action.kind == 'A_RIICHI_DISCARD'
+                       and m.action.args[0].name == 'TILE_6p')
+    res = b.apply(select(b, v0, riichi_move))
+    while res.status == 'advanced':
+        if b._native.phase == Phase.WaitResponse:
+            views = [b.snapshot(p) for p in range(4) if b.snapshot(p) is not None]
+            responses = {v.key.viewer: select(b, v, next(m for m in v.legal_moves if m.action.kind == 'A_PASS'))
+                         for v in views}
+            res = b.apply_responses(views[0].key.window, responses)
+        else:
+            p = b._native.current_player
+            v = b.snapshot(p)
+            move = next((m for m in v.legal_moves if m.action.kind == 'A_DISCARD'
+                         and m.action.args[1].name == 'TSUMOGIRI'), None)
+            move = move or next(m for m in v.legal_moves if m.action.kind == 'A_DISCARD')
+            res = b.apply(select(b, v, move))
+    assert res.status == 'round_ended'
+    rr = b.round_result()
+    assert rr['kind'] == 'nagashi'
+    assert rr['reason'] == 'nagashimangan'
+    # Pure nagashi mangan settlement (non-dealer seat 2): dealer 0 pays 4000, seats 1 & 3 pay 2000.
+    # Seat 0's -1000 riichi deposit was already accounted for by reach_accepted.
+    assert rr['score_delta'] == [-4000, -2000, 8000, -2000]
+    assert rr['scores'] == [20000, 23000, 33000, 23000]
+    assert rr['kyotaku'] == 1
+    assert sum(rr['scores']) + 1000 * rr['kyotaku'] == 100000
+
+
+def test_exhaustive_draw_self_exhausted_ankan_wait_is_noten():
+    from riichienv import Phase
+    # Seat 0 starts with 2m3m4m 4p4p 6p8p 4s5s6s + three 7p, draws the 4th 7p and declares 7p ankan.
+    # Remaining standing hand waits solely on a 5th 7p (self-exhausted karaten -> NOTEN).
+    # Seats 1, 2, 3 hold noten hands and tsumogiri through the wall; exhaustive draw must settle [0,0,0,0].
+    noten = ['1m','3m','5m','7m','9m','1p','3p','5p','9p','1s','3s','9s','E']
+    noten_r = ['1m','3m','5mr','7m','9m','1p','3p','5pr','9p','1s','3s','9s','S']
+    hands = {
+        0: ['2m','3m','4m','4p','4p','6p','8p','4s','5sr','6s','7p','7p','7p'],
+        1: noten_r,
+        2: noten,
+        3: noten,
+    }
+    b = rig(hands, drawn='7p', draws=['2s', '2s', '2s', '2s'])
+    # Seat 0 declares 7p ankan on turn 1, then discards rinshan draw.
+    v0 = b.snapshot(0)
+    ankan_move = next(m for m in v0.legal_moves if m.action.kind == 'A_ANKAN')
+    res = b.apply(select(b, v0, ankan_move))
+    while res.status == 'advanced':
+        if b._native.phase == Phase.WaitResponse:
+            views = [b.snapshot(p) for p in range(4) if b.snapshot(p) is not None]
+            responses = {v.key.viewer: select(b, v, next(m for m in v.legal_moves if m.action.kind == 'A_PASS'))
+                         for v in views}
+            res = b.apply_responses(views[0].key.window, responses)
+        else:
+            p = b._native.current_player
+            v = b.snapshot(p)
+            move = next((m for m in v.legal_moves if m.action.kind == 'A_DISCARD'
+                         and m.action.args[1].name == 'TSUMOGIRI'), None)
+            move = move or next(m for m in v.legal_moves if m.action.kind == 'A_DISCARD')
+            res = b.apply(select(b, v, move))
+    assert res.status == 'round_ended'
+    rr = b.round_result()
+    assert rr['kind'] == 'exhaustive'
+    assert rr['reason'] == 'exhaustive_draw'
+    assert rr['score_delta'] == [0, 0, 0, 0]
+    assert rr['scores'] == [25000, 25000, 25000, 25000]

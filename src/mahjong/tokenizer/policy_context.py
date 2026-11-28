@@ -77,9 +77,19 @@ class PolicyContextCodec(MahjongTokenizer):
             reader.pop()
             previous.append(RoundContext(header, events, complete))
         reader.pop()
-        current = super().decode_policy_prefix([*ids[:3], *ids[reader.pos:]])
-        return PolicyContextInput(current.header, current.visible_history,
-                                  current.hand_state, tuple(previous))
+        reader.expect('HEADER')
+        header = reader.value()
+        for name in ('END_HEADER', 'HISTORY', 'FULL_HISTORY'):
+            reader.expect(name)
+        events = []
+        while reader.peek() != 'END_HISTORY':
+            reader.expect('EV')
+            events.append(reader.event())
+        reader.pop()
+        hand_state = reader.hand_state()
+        reader.expect('DECISION')
+        reader.finish()
+        return PolicyContextInput(header, events, hand_state, tuple(previous))
 
 
 def codec_for_schema(schema):

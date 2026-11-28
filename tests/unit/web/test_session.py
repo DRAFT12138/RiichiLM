@@ -16,6 +16,11 @@ def budget_probe_worker(connection, config, device, decision_timeout):
     connection.close()
 
 
+def sampling_probe_worker(connection, config, device, decision_timeout):
+    connection.send(dict(type='failed', error=f"sampling={config['temperature']}/{config['top_p']}"))
+    connection.close()
+
+
 def test_configured_memory_budget_reaches_real_spawn(tmp_path):
     s = Session(tmp_path, gpu_memory_gib=6.5, worker=budget_probe_worker)
     try:
@@ -185,3 +190,41 @@ def test_same_origin_token_and_host_checks_and_no_history_api(tmp_path):
         assert (
             response.json() is None and response.headers["cache-control"] == "no-store"
         )
+
+
+def test_sampling_params_bootstrap_override_and_worker_propagation(tmp_path):
+    from mahjong.app.cli import parser
+    from mahjong.inference.sampling import DEFAULT_INFERENCE_TEMPERATURE, DEFAULT_INFERENCE_TOP_P
+
+    cli_args = parser().parse_args(['web-play'])
+    assert cli_args.temperature == DEFAULT_INFERENCE_TEMPERATURE
+    assert cli_args.top_p == DEFAULT_INFERENCE_TOP_P
+
+    app = create_app(models_root=tmp_path, temperature=0.8, top_p=0.95, worker=sampling_probe_worker)
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        b = client.get("/api/bootstrap").json()
+        assert b["temperature"] == 0.8 and b["top_p"] == 0.95
+        headers = {"Origin": "http://127.0.0.1:8765", "X-Session-Token": b["token"]}
+        page = uuid.uuid4().hex
+        assert client.post("/api/page", json=dict(page_id=page, generation=b["generation"]), headers=headers).status_code == 200
+        bad = client.post(
+            "/api/table",
+            json=dict(page_id=page, request_id="bad-req-1234", mode="single", opponents=["random"] * 3, temperature=3.0),
+            headers=headers,
+        )
+        assert bad.status_code == 409
+        created = client.post(
+            "/api/table",
+            json=dict(
+                page_id=page,
+                request_id="ok-req-12345",
+                mode="single",
+                opponents=["random"] * 3,
+                temperature=0.45,
+                top_p=0.75,
+            ),
+            headers=headers,
+        )
+        assert created.status_code == 200
+        wait_until(lambda: client.get(f"/api/table?page_id={page}", headers=headers).json()["state"] == "failed")
+        assert client.get(f"/api/table?page_id={page}", headers=headers).json()["error"] == "sampling=0.45/0.75"

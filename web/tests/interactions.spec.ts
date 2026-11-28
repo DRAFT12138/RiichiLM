@@ -188,7 +188,9 @@ test("lobby keeps configuration and launch summary usable on desktop and mobile"
       expect(button.y + button.height).toBeLessThanOrEqual(800);
       const modes = (await page.locator(".mode-grid").boundingBox())!;
       const seats = (await page.locator(".opponent-grid").boundingBox())!;
-      expect(modes.x + modes.width).toBeLessThanOrEqual(seats.x);
+      expect(modes.y + modes.height).toBeLessThanOrEqual(seats.y);
+      const launch = (await page.locator(".launch-panel").boundingBox())!;
+      expect(seats.x + seats.width).toBeLessThanOrEqual(launch.x);
     }
   }
 });
@@ -547,6 +549,7 @@ test("model search explains when there are no matches", async ({ page }) => {
     await route.fulfill({ json: body });
   });
   await page.goto("/");
+  await page.getByRole("button", { name: "模型与训练" }).click();
   await page.getByRole("textbox", { name: "搜索模型和训练记录" }).fill("不存在的记录");
   await expect(page.locator(".search-empty")).toContainText("没有找到匹配的训练记录");
   await page.getByRole("textbox", { name: "搜索模型和训练记录" }).fill("");
@@ -1193,6 +1196,7 @@ test("model library reports catalog failures instead of an empty library", async
       : path === "/api/catalog" ? { runs: [], errors: ["catalog unavailable"] } : {} });
   });
   await page.goto("/");
+  await page.getByRole("button", { name: "模型与训练" }).click();
   await expect(page.locator(".library-panel [role=alert]")).toHaveText("catalog unavailable");
   await expect(page.locator(".empty-library")).toHaveCount(0);
 });
@@ -1206,6 +1210,7 @@ test("model assignments and search remain usable on a narrow screen", async ({ p
       : path === "/api/catalog" ? { runs: [{ run_id: "run-" + "c".repeat(80), experiment: "experiment", created_at: "", training_type: "NTP", checkpoints: [cp], attempts: [], errors: [] }], errors: [] } : {} });
   });
   await page.goto("/");
+  await page.getByRole("button", { name: "模型与训练" }).click();
   const search = page.getByRole("textbox", { name: "搜索模型和训练记录" });
   await search.focus();
   await expect(page.locator(".search")).toHaveCSS("border-color", "rgb(37, 142, 131)");
@@ -1213,12 +1218,13 @@ test("model assignments and search remain usable on a narrow screen", async ({ p
   await expect(assign).toHaveAttribute("aria-pressed", "false");
   await assign.click();
   await expect(assign).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("#opponent-0")).toHaveValue("cp");
   const toggle = page.getByRole("button", { name: "展开训练记录" });
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await toggle.click();
   await expect(page.getByRole("button", { name: "收起训练记录" })).toHaveAttribute("aria-expanded", "true");
   expect(await page.locator("body").evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.getByRole("button", { name: "返回对局配置" }).click();
+  await expect(page.locator("#opponent-0")).toHaveValue("cp");
 });
 
 test("sound is opt-in, adjustable and persists across reloads", async ({ page }) => {

@@ -52,13 +52,21 @@ export const catalog = () => request<Catalog>("catalog");
 export const refreshCatalog = () => request<Catalog>("catalog/refresh", {});
 export const table = (signal?: AbortSignal) =>
   request<Table | null>(`table?page_id=${pageId}`, undefined, signal);
-export const create = (mode: Mode, opponents: string[], requestId: string, spectator = false) =>
+export const create = (
+  mode: Mode,
+  opponents: string[],
+  requestId: string,
+  spectator = false,
+  sampling?: { temperature?: number; top_p?: number },
+) =>
   request<{ table_id: string }>("table", {
     page_id: pageId,
     request_id: requestId,
     mode,
     opponents,
     spectator,
+    ...(sampling?.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+    ...(sampling?.top_p !== undefined ? { top_p: sampling.top_p } : {}),
   });
 export const control = (t: Table, control: SpectatorControl, value?: number, requestId: string = crypto.randomUUID()) =>
   request<CommandReceipt>("table/control", {

@@ -4,6 +4,8 @@ export interface SetupConfig {
   opponents: string[];
   spectator: boolean;
   primary: string;
+  temperature: number;
+  top_p: number;
 }
 export type SpectatorControl = "pause" | "resume" | "step" | "view" | "speed";
 export interface Controller {
@@ -12,6 +14,8 @@ export interface Controller {
   name?: string | null;
   model?: string | null;
   sampling?: string | null;
+  temperature?: number | null;
+  top_p?: number | null;
 }
 export interface DecisionNote {
   seat: number;
@@ -128,6 +132,8 @@ export interface Table {
   playback_interval?: number;
   decision_notes?: DecisionNote[];
   controllers?: Controller[];
+  temperature?: number | null;
+  top_p?: number | null;
   busy: boolean;
   error?: string;
   command_error?: string;

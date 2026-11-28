@@ -1833,6 +1833,10 @@ impl GameState3P {
                         self.players[i].score += delta;
                         self.players[i].score_delta = delta;
                     }
+                } else {
+                    for p in &mut self.players {
+                        p.score_delta = 0;
+                    }
                 }
             }
         } else if let Some(stripped) = reason.strip_prefix("Error: Illegal Action by Player ")

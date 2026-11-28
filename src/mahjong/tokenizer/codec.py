@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 import csv
+from functools import lru_cache
 import hashlib
 from importlib.resources import files
 import io
@@ -113,31 +114,97 @@ BINDING = {
     'ir_schema_version': 'majang-ir/2', 'task': 'policy-latest-hand/2',
 }
 
+_LITERALS = {'NULL': None, 'TRUE': True, 'FALSE': False}
+_DIGIT_TOKENS = frozenset(f'U{i}' for i in range(10))
+
+
+def _build_tile_key_map():
+    mapping = {'TILE_HIDDEN': (34, 0)}
+    for suit_idx, suit in enumerate('mps'):
+        for rank in range(1, 10):
+            mapping[f'TILE_{rank}{suit}'] = (suit_idx * 9 + rank - 1, 0)
+        mapping[f'TILE_5{suit}r'] = (suit_idx * 9 + 4, 1)
+    for honor_idx, honor in enumerate('ESWNPFC'):
+        mapping[f'TILE_{honor}'] = (27 + honor_idx, 0)
+    return mapping
+
+
+_TILE_KEY_MAP = _build_tile_key_map()
+
+
+def _build_vocab_tables(resource):
+    raw = resource.joinpath('vocab-v2.tsv').read_bytes()
+    manifest = json.loads(resource.joinpath('vocab-v2.manifest.json').read_text())
+    MahjongTokenizer.validate_binding(manifest)
+    if hashlib.sha256(raw).hexdigest() != BINDING['vocab_sha256']:
+        fail('NONCANONICAL', 'vocabulary digest mismatch')
+    rows = list(csv.DictReader(io.StringIO(raw.decode('utf-8')), delimiter='\t'))
+    if ([int(r['id']) for r in rows] != list(range(1024))
+            or len({r['token'] for r in rows}) != 1024
+            or dict(Counter(r['category'] for r in rows)) != manifest['categories']
+            or sum(r['status'] == 'active' for r in rows) != 832):
+        fail('NONCANONICAL', 'vocabulary mapping/count mismatch')
+    if (manifest.get('reserved_count') != 192
+            or [manifest.get(k) for k in ('vocab_size', 'pad_token_id', 'bos_token_id', 'eos_token_id')] != [1024, 0, 1, 2]):
+        fail('NONCANONICAL', 'vocabulary metadata mismatch')
+    ids = {r['token'][1:-1]: int(r['id']) for r in rows if r['status'] == 'active'}
+    fields = {name[2:].lower(): name for name in ids if name.startswith('F_')}
+    field_ids = {key: ids[tok_name] for key, tok_name in fields.items()}
+    field_sort_keys = {key: (0, tid) for key, tid in field_ids.items()}
+    id_to_name = tuple(r['token'][1:-1] if r['status'] == 'active' else None for r in rows)
+    u_ids = tuple(ids[f'U{i}'] for i in range(128))
+    byte_ids = tuple(ids[f'BYTE_{b:02X}'] for b in range(256))
+    u_int_by_name = {name: int(name[1:]) for name in ids if name.startswith('U') and name[1:].isdigit()}
+    f_key_by_name = {name: name[2:].lower() for name in ids if name.startswith('F_')}
+    atom_by_name = {
+        r['token'][1:-1]: Atom(r['token'][1:-1])
+        for r in rows
+        if r['status'] == 'active' and (
+            r['category'] in ('tile', 'seat', 'enum', 'yaku') or r['token'][1:-1] in ('UNKNOWN', 'HIDDEN')
+        )
+    }
+    spec_sha = hashlib.sha256(resource.joinpath('codec-spec-v2.json').read_bytes()).hexdigest()
+    return (
+        tuple(rows), ids, fields, field_ids, field_sort_keys,
+        id_to_name, u_ids, byte_ids, u_int_by_name, f_key_by_name, atom_by_name, spec_sha,
+    )
+
+
+@lru_cache(maxsize=1)
+def _load_default_vocab():
+    resource = files('mahjong.tokenizer').joinpath('resources')
+    return resource, _build_vocab_tables(resource)
+
 
 class MahjongTokenizer:
     vocab_size = 1024
     pad_token_id, bos_token_id, eos_token_id = 0, 1, 2
 
     def __init__(self, *, _resource=None):
-        resource = _resource or files('mahjong.tokenizer').joinpath('resources')
+        if _resource is None:
+            resource, tables = _load_default_vocab()
+        else:
+            resource = _resource
+            tables = _build_vocab_tables(resource)
         self._resource = resource
-        raw = resource.joinpath('vocab-v2.tsv').read_bytes()
-        manifest = json.loads(resource.joinpath('vocab-v2.manifest.json').read_text())
-        self.validate_binding(manifest)
-        if hashlib.sha256(raw).hexdigest() != BINDING['vocab_sha256']:
-            fail('NONCANONICAL', 'vocabulary digest mismatch')
-        rows = list(csv.DictReader(io.StringIO(raw.decode('utf-8')), delimiter='\t'))
-        if ([int(r['id']) for r in rows] != list(range(1024))
-                or len({r['token'] for r in rows}) != 1024
-                or dict(Counter(r['category'] for r in rows)) != manifest['categories']
-                or sum(r['status'] == 'active' for r in rows) != 832):
-            fail('NONCANONICAL', 'vocabulary mapping/count mismatch')
-        if (manifest.get('reserved_count') != 192
-                or [manifest.get(k) for k in ('vocab_size', 'pad_token_id', 'bos_token_id', 'eos_token_id')] != [1024, 0, 1, 2]):
-            fail('NONCANONICAL', 'vocabulary metadata mismatch')
-        self._rows = rows
-        self._ids = {r['token'][1:-1]: int(r['id']) for r in rows if r['status'] == 'active'}
-        self._fields = {name[2:].lower(): name for name in self._ids if name.startswith('F_')}
+        (
+            rows_tuple, ids, fields, field_ids, field_sort_keys,
+            id_to_name, u_ids, byte_ids, u_int_by_name, f_key_by_name, atom_by_name, spec_sha,
+        ) = tables
+        self._rows = list(rows_tuple)
+        self._ids = dict(ids)
+        self._fields = dict(fields)
+        self._field_ids = field_ids
+        self._field_sort_keys = field_sort_keys
+        self._id_to_name = id_to_name
+        self._u_ids = u_ids
+        self._byte_ids = byte_ids
+        self._u_int_by_name = u_int_by_name
+        self._f_key_by_name = f_key_by_name
+        self._atom_by_name = atom_by_name
+        self._default_spec_sha256 = spec_sha if _resource is None else None
+        self._action_suffix_encode_cache = {}
+        self._action_suffix_decode_cache = {}
         self.vocab_sha256 = BINDING['vocab_sha256']
 
     @staticmethod
@@ -147,22 +214,29 @@ class MahjongTokenizer:
             fail('NONCANONICAL', 'incompatible vocabulary/schema/IR/task binding')
 
     def token_id(self, name):
-        if not isinstance(name, str) or name not in self._ids:
-            fail('TYPE_MISMATCH', f'unknown or reserved token: {name!r}')
-        return self._ids[name]
+        if type(name) is str:
+            tid = self._ids.get(name)
+            if tid is not None:
+                return tid
+        elif isinstance(name, str) and name in self._ids:
+            return self._ids[name]
+        fail('TYPE_MISMATCH', f'unknown or reserved token: {name!r}')
 
     def token_name(self, token_id):
-        if type(token_id) is not int or not 0 <= token_id < self.vocab_size:
-            fail('TYPE_MISMATCH', 'invalid token ID')
-        row = self._rows[token_id]
-        if row['status'] != 'active':
+        if type(token_id) is int and 0 <= token_id < 1024:
+            name = self._id_to_name[token_id]
+            if name is not None:
+                return name
             fail('TYPE_MISMATCH', 'reserved token ID')
-        return row['token'][1:-1]
+        fail('TYPE_MISMATCH', 'invalid token ID')
 
     def _atom(self, value):
         return self.token_id(value.name)
 
     def tile_key(self, value):
+        res = _TILE_KEY_MAP.get(value.name)
+        if res is not None:
+            return res
         name = value.name.removeprefix('TILE_')
         if name == 'HIDDEN':
             return (34, 0)
@@ -175,6 +249,9 @@ class MahjongTokenizer:
     def _key(self, key):
         if type(key) is not str:
             fail('TYPE_MISMATCH', 'object key must be string')
+        sk = self._field_sort_keys.get(key)
+        if sk is not None:
+            return sk
         if key in self._fields:
             return (0, self.token_id(self._fields[key]))
         try:
@@ -190,16 +267,19 @@ class MahjongTokenizer:
         if depth > 128:
             fail('TYPE_MISMATCH', 'container nesting exceeds 128')
         t = self.token_id
-        enc = lambda v: self._encode(v, depth + 1)
+        ids = self._ids
+        d1 = depth + 1
         if value is None:
-            return [t('NULL')]
-        if type(value) is bool:
-            return [t('TRUE' if value else 'FALSE')]
-        if type(value) is int:
+            return [ids['NULL']]
+        vtype = type(value)
+        if vtype is bool:
+            return [ids['TRUE' if value else 'FALSE']]
+        if vtype is int:
+            u_ids = self._u_ids
             if 0 <= value <= 127:
-                return [t(f'U{value}')]
-            return [t('INT'), t('NEG' if value < 0 else 'POS'),
-                    *(t(f'U{digit}') for digit in str(abs(value))), t('END_INT')]
+                return [u_ids[value]]
+            return [ids['INT'], ids['NEG' if value < 0 else 'POS'],
+                    *(u_ids[ord(digit) - 48] for digit in str(abs(value))), ids['END_INT']]
         if isinstance(value, Atom):
             return [self._atom(value)]
         if isinstance(value, Decimal):
@@ -218,34 +298,49 @@ class MahjongTokenizer:
             while scale and coefficient % 10 == 0:
                 coefficient //= 10
                 scale -= 1
-            return [t('DECIMAL'), *enc(coefficient), *enc(scale)]
-        if type(value) in (str, bytes):
-            is_text = type(value) is str
+            return [ids['DECIMAL'], *self._encode(coefficient, d1), *self._encode(scale, d1)]
+        if vtype is str or vtype is bytes:
+            is_text = vtype is str
             try:
                 data = value.encode('utf-8') if is_text else value
             except UnicodeError:
                 fail('TYPE_MISMATCH', 'invalid Unicode string')
-            tag = 'UTF8' if is_text else 'BYTES'
-            return [t(tag), *(t(f'BYTE_{b:02X}') for b in data), t('END_' + tag)]
-        if type(value) is list:
-            return [t('LIST'), *(i for v in value for i in enc(v)), t('END_LIST')]
-        if type(value) is dict:
-            result = [t('OBJ')]
+            b_ids = self._byte_ids
+            if is_text:
+                return [ids['UTF8'], *(b_ids[b] for b in data), ids['END_UTF8']]
+            return [ids['BYTES'], *(b_ids[b] for b in data), ids['END_BYTES']]
+        if vtype is list:
+            result = [ids['LIST']]
+            for v in value:
+                result.extend(self._encode(v, d1))
+            result.append(ids['END_LIST'])
+            return result
+        if vtype is dict:
+            result = [ids['OBJ']]
+            field_ids = self._field_ids
             for key in sorted(value, key=self._key):
-                result.extend([t(self._fields[key])] if key in self._fields else enc(key))
-                result.extend(enc(value[key]))
-            return [*result, t('END_OBJ')]
+                fid = field_ids.get(key)
+                if fid is not None:
+                    result.append(fid)
+                elif key in self._fields:
+                    result.append(t(self._fields[key]))
+                else:
+                    result.extend(self._encode(key, d1))
+                result.extend(self._encode(value[key], d1))
+            result.append(ids['END_OBJ'])
+            return result
         if isinstance(value, Extension):
             if type(value.namespace) is not str or type(value.version) is not int or type(value.payload) is not dict:
                 fail('TYPE_MISMATCH', 'invalid extension')
-            return [t('EXT'), *enc(value.namespace), *enc(value.version), *enc(value.payload), t('END_EXT')]
+            return [ids['EXT'], *self._encode(value.namespace, d1), *self._encode(value.version, d1),
+                    *self._encode(value.payload, d1), ids['END_EXT']]
         if isinstance(value, Action):
             return self.encode_action(value)
         if isinstance(value, Event):
-            return self._encode_event(value, depth + 1)
+            return self._encode_event(value, d1)
         if isinstance(value, ResponseBlock):
-            return [t('RESPONSE'), *enc(value.payload), t('END_RESPONSE')]
-        fail('TYPE_MISMATCH', f'unsupported value type {type(value).__name__}')
+            return [ids['RESPONSE'], *self._encode(value.payload, d1), ids['END_RESPONSE']]
+        fail('TYPE_MISMATCH', f'unsupported value type {vtype.__name__}')
 
     def decode_value(self, ids):
         reader = _Reader(self, ids)
@@ -266,10 +361,32 @@ class MahjongTokenizer:
         """Standalone ACT archive wrapper; never append this to a policy prefix."""
         return [self.token_id('ACT'), *self.encode_action_suffix(action)[:-1], self.token_id('END_ACT')]
 
+    def _encode_action_suffix_tuple(self, action):
+        cacheable = (
+            type(action) is Action
+            and type(action.kind) is str
+            and type(action.args) is tuple
+            and all(type(arg) is Atom or type(arg) is int for arg in action.args)
+        )
+        if cacheable:
+            cached = self._action_suffix_encode_cache.get(action)
+            if cached is not None:
+                return cached
+        canon = self._action(action)
+        encoded = [self.token_id(canon.kind)]
+        for arg in canon.args:
+            encoded.extend(self.encode_value(arg))
+        encoded.append(self.token_id('END_DECISION'))
+        result = tuple(encoded)
+        if cacheable:
+            if len(self._action_suffix_encode_cache) >= 4096:
+                self._action_suffix_encode_cache.clear()
+            self._action_suffix_encode_cache[action] = result
+        return result
+
     def encode_action_suffix(self, action):
         """Payload + END_DECISION, to append after the prefix's DECISION."""
-        action = self._action(action)
-        return [self.token_id(action.kind), *(i for arg in action.args for i in self.encode_value(arg)), self.token_id('END_DECISION')]
+        return list(self._encode_action_suffix_tuple(action))
 
     def decode_action(self, ids):
         reader = _Reader(self, ids)
@@ -279,9 +396,18 @@ class MahjongTokenizer:
         return action
 
     def decode_action_suffix(self, ids):
+        cacheable = type(ids) is tuple and all(type(x) is int for x in ids)
+        if cacheable:
+            cached = self._action_suffix_decode_cache.get(ids)
+            if cached is not None:
+                return cached
         reader = _Reader(self, ids)
         action = reader.action('END_DECISION')
         reader.finish()
+        if cacheable:
+            if len(self._action_suffix_decode_cache) >= 4096:
+                self._action_suffix_decode_cache.clear()
+            self._action_suffix_decode_cache[ids] = action
         return action
 
     def encode_header(self, header):
@@ -356,6 +482,18 @@ class MahjongTokenizer:
         reader.finish()
         return sequence
 
+    def decode_policy_prefix_tail(self, ids):
+        reader = _Reader(self, ids)
+        events = []
+        while reader.peek() != 'END_HISTORY':
+            reader.expect('EV')
+            events.append(reader.event())
+        reader.pop()
+        hand_state = reader.hand_state()
+        reader.expect('DECISION')
+        reader.finish()
+        return events, hand_state
+
     def encode_policy_sequence(self, sequence, action, *, eos=False):
         result = [*self.encode_policy_prefix(sequence), *self.encode_action_suffix(action)]
         if eos:
@@ -388,6 +526,8 @@ class MahjongTokenizer:
 
     @property
     def codec_spec_sha256(self):
+        if self._default_spec_sha256 is not None:
+            return self._default_spec_sha256
         return hashlib.sha256(self._resource.joinpath('codec-spec-v2.json').read_bytes()).hexdigest()
 
     @classmethod
@@ -408,7 +548,15 @@ class _Reader:
         if type(ids) not in (list, tuple):
             fail('TYPE_MISMATCH', 'expected token ID sequence')
         self.codec = codec
-        self.names = [codec.token_name(i) for i in ids]
+        id_to_name = codec._id_to_name
+        try:
+            names = [id_to_name[i] for i in ids]
+        except (IndexError, TypeError):
+            names = [codec.token_name(i) for i in ids]
+        else:
+            if not all(type(i) is int and n is not None for i, n in zip(ids, names)):
+                names = [codec.token_name(i) for i in ids]
+        self.names = names
         self.pos = 0
 
     def peek(self):
@@ -479,9 +627,11 @@ class _Reader:
         if depth > 128:
             fail('TYPE_MISMATCH', 'container nesting exceeds 128')
         name = self.pop()
-        sub = lambda: self.value(depth + 1)
-        if name in ('NULL', 'TRUE', 'FALSE'):
-            return {'NULL': None, 'TRUE': True, 'FALSE': False}[name]
+        if name in _LITERALS:
+            return _LITERALS[name]
+        u_val = self.codec._u_int_by_name.get(name)
+        if u_val is not None:
+            return u_val
         if name.startswith('U') and name[1:].isdigit():
             return int(name[1:])
         if name == 'INT':
@@ -491,7 +641,7 @@ class _Reader:
             digits = []
             while self.peek() != 'END_INT':
                 digit = self.pop()
-                if digit not in tuple(f'U{i}' for i in range(10)):
+                if digit not in _DIGIT_TOKENS:
                     fail('TYPE_MISMATCH', 'expected single decimal digit')
                 digits.append(digit[1:])
             self.pop()
@@ -499,14 +649,16 @@ class _Reader:
                 fail('TYPE_MISMATCH', 'empty integer')
             result = int(''.join(digits)) * (-1 if sign == 'NEG' else 1)
             return result
+        d1 = depth + 1
         if name == 'DECIMAL':
-            coefficient, scale = sub(), sub()
+            coefficient, scale = self.value(d1), self.value(d1)
             if type(coefficient) is not int or type(scale) is not int or scale < 0:
                 fail('TYPE_MISMATCH', 'invalid decimal parts')
             return Decimal((int(coefficient < 0), tuple(int(x) for x in str(abs(coefficient))), -scale))
         if name in ('UTF8', 'BYTES'):
             data = bytearray()
-            while self.peek() != 'END_' + name:
+            end_tok = 'END_' + name
+            while self.peek() != end_tok:
                 byte = self.pop()
                 if not byte.startswith('BYTE_'):
                     fail('TYPE_MISMATCH', 'expected byte token')
@@ -519,20 +671,29 @@ class _Reader:
         if name == 'LIST':
             result = []
             while self.peek() != 'END_LIST':
-                result.append(sub())
+                result.append(self.value(d1))
             self.pop()
             return result
         if name == 'OBJ':
             result = {}
+            f_keys = self.codec._f_key_by_name
             while self.peek() != 'END_OBJ':
-                key = self.pop()[2:].lower() if self.peek().startswith('F_') else sub()
+                nxt = self.peek()
+                f_key = f_keys.get(nxt)
+                if f_key is not None:
+                    self.pos += 1
+                    key = f_key
+                elif nxt.startswith('F_'):
+                    key = self.pop()[2:].lower()
+                else:
+                    key = self.value(d1)
                 if key in result:
                     fail('TYPE_MISMATCH', 'duplicate key cannot be represented by dict')
-                result[key] = sub()
+                result[key] = self.value(d1)
             self.pop()
             return result
         if name == 'EXT':
-            namespace, version, payload = sub(), sub(), sub()
+            namespace, version, payload = self.value(d1), self.value(d1), self.value(d1)
             self.expect('END_EXT')
             if type(namespace) is not str or type(version) is not int or type(payload) is not dict:
                 fail('TYPE_MISMATCH', 'invalid extension')
@@ -542,9 +703,12 @@ class _Reader:
         if name == 'EV':
             return self.event(depth)
         if name == 'RESPONSE':
-            payload = sub()
+            payload = self.value(d1)
             self.expect('END_RESPONSE')
             return ResponseBlock(payload)
+        atom = self.codec._atom_by_name.get(name)
+        if atom is not None:
+            return atom
         category = self.codec._rows[self.codec.token_id(name)]['category']
         if category in ('tile', 'seat', 'enum', 'yaku') or name in ('UNKNOWN', 'HIDDEN'):
             return Atom(name)
